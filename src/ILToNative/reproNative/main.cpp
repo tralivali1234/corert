@@ -20,6 +20,8 @@ extern "C" int32_t RhpEnableConservativeStackReporting();
 extern "C" void RhpRegisterSimpleModule(SimpleModuleHeader* pModule);
 #endif // USE_MRT
 
+#include "platform.h"
+
 int __initialize_runtime()
 {
 #if USE_MRT
@@ -81,11 +83,25 @@ void __reverse_pinvoke_return(ReversePInvokeFrame* pRevFrame)
 #endif // USE_MRT
 }
 
+extern "C" void* __GCStaticRegionStart;
+extern "C" void* __GCStaticRegionEnd;
+
 void __register_module(SimpleModuleHeader* pModule)
 {
 #if USE_MRT
     RhpRegisterSimpleModule(pModule);
 #endif // USE_MRT
+
+#ifndef CPPCODEGEN
+    // Initialize GC statics in the module
+    // TODO: emit a ModuleHeader and use it here
+
+    for (void** currentBlock = &__GCStaticRegionStart; currentBlock < &__GCStaticRegionEnd; currentBlock++)
+    {
+        Object* gcBlock = __allocate_object((MethodTable*)*currentBlock);
+        *currentBlock = CreateGlobalHandle(ObjectToOBJECTREF(gcBlock));
+    }
+#endif
 }
 
 namespace mscorlib { namespace System { 
@@ -155,10 +171,10 @@ extern "C" Object * __allocate_object(MethodTable * pMT)
 #endif
 }
 
+extern "C" void __EEType_mscorlib_System_String();
+
 Object * __allocate_string(int32_t len)
 {
-#ifdef CPPCODEGEN
-
 #if !USE_MRT
     alloc_context * acontext = GetThread()->GetAllocContext();
     Object * pObject;
@@ -181,18 +197,15 @@ Object * __allocate_string(int32_t len)
         if (pObject == NULL)
             return NULL; // TODO: Throw OOM
     }
-
+#ifdef CPPCODEGEN
     pObject->SetMethodTable(System::String::__getMethodTable());
-
-    *(int32_t *)(((intptr_t *)pObject)+1) = len;
-
-    return pObject;
+#else
+    pObject->SetMethodTable((MethodTable*)__EEType_mscorlib_System_String);
+#endif
+	*(int32_t *)(((intptr_t *)pObject) + 1) = len;
+	return pObject;
 #else
     return RhNewArray(System::String::__getMethodTable(), len);
-#endif
-
-#else
-    throw 42;
 #endif
 }
 
@@ -231,6 +244,38 @@ extern "C" Object * __allocate_array(size_t elements, MethodTable * pMT)
 #endif 
 }
 
+#if defined(_WIN64)
+// Card byte shift is different on 64bit.
+#define card_byte_shift     11
+#else
+#define card_byte_shift     10
+#endif
+
+#define card_byte(addr) (((size_t)(addr)) >> card_byte_shift)
+
+inline void ErectWriteBarrier(Object ** dst, Object * ref)
+{
+    // if the dst is outside of the heap (unboxed value classes) then we
+    //      simply exit
+    if (((BYTE*)dst < g_lowest_address) || ((BYTE*)dst >= g_highest_address))
+        return;
+
+    if ((BYTE*)ref >= g_ephemeral_low && (BYTE*)ref < g_ephemeral_high)
+    {
+        // volatile is used here to prevent fetch of g_card_table from being reordered 
+        // with g_lowest/highest_address check above. See comment in code:gc_heap::grow_brick_card_tables.
+        BYTE* pCardByte = (BYTE *)*(volatile BYTE **)(&g_card_table) + card_byte((BYTE *)dst);
+        if (*pCardByte != 0xFF)
+            *pCardByte = 0xFF;
+    }
+}
+
+extern "C" void WriteBarrier(Object ** dst, Object * ref)
+{
+    *dst = ref;
+    ErectWriteBarrier(dst, ref);
+}
+
 void __throw_exception(void * pEx)
 {
     // TODO: Exception throwing
@@ -250,6 +295,15 @@ Object * __load_string_literal(const char * string)
     for (size_t i = 0; i < len; i++)
         p[i] = string[i];
     return pString;
+}
+
+OBJECTHANDLE __load_static_string_literal(const uint8_t* utf8, int32_t utf8Len, int32_t strLen)
+{
+    Object * pString = __allocate_string(strLen);
+    uint16_t * buffer = (uint16_t *)((char*)pString + sizeof(intptr_t) + sizeof(int32_t));
+    if (strLen > 0)
+        UTF8ToWideChar((char*)utf8, utf8Len, buffer, strLen);
+    return CreateGlobalHandle(ObjectToOBJECTREF(pString));
 }
 
 // TODO: Rewrite in C#
@@ -546,10 +600,41 @@ SimpleModuleHeader __module = { NULL, NULL /* &__gcStatics, &__gcStaticsDescs */
 
 extern "C" int repro_Program__Main();
 
+extern "C" void __str_fixup();
+extern "C" void __str_fixup_end();
+int __reloc_string_fixup()
+{
+    for (unsigned** ptr = (unsigned**)__str_fixup;
+         ptr < (unsigned**)__str_fixup_end; ptr++)
+    {
+        int utf8Len;
+        uint8_t* bytes = (uint8_t*) *ptr;
+        if (AsmDataFormat::DecodeUnsigned(&bytes, bytes + 5, (unsigned*)&utf8Len) != 0)
+            return -1;
+
+        assert(bytes <= ((uint8_t*)*ptr) + 5);
+        assert(utf8Len >= 0);
+
+        int strLen = 0;
+        if (utf8Len != 0)
+        {
+            strLen = UTF8ToWideCharLen((char*)bytes, utf8Len);
+            if (strLen <= 0) return -1;
+        }
+
+        OBJECTHANDLE handle;
+        *((OBJECTHANDLE*)ptr) = __load_static_string_literal(bytes, utf8Len, strLen);
+        // TODO: This "handle" will leak, deallocate with __unload
+    }
+    return 0;
+}
+
 int main(int argc, char * argv[]) {
     if (__initialize_runtime() != 0) return -1;
     __register_module(&__module);
     ReversePInvokeFrame frame; __reverse_pinvoke(&frame);
+	
+    if (__reloc_string_fixup() != 0) return -1;
 
     repro_Program__Main();
 

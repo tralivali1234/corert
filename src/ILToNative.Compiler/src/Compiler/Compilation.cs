@@ -20,13 +20,15 @@ namespace ILToNative
     public struct CompilationOptions
     {
         public bool IsCppCodeGen;
+        public bool NoLineNumbers;
     }
 
     public partial class Compilation
     {
-        readonly TypeSystemContext _typeSystemContext;
+        readonly CompilerTypeSystemContext _typeSystemContext;
         readonly CompilationOptions _options;
 
+        Dictionary<string, int> _stringTable = new Dictionary<string, int>();
         Dictionary<TypeDesc, RegisteredType> _registeredTypes = new Dictionary<TypeDesc, RegisteredType>();
         Dictionary<MethodDesc, RegisteredMethod> _registeredMethods = new Dictionary<MethodDesc, RegisteredMethod>();
         Dictionary<FieldDesc, RegisteredField> _registeredFields = new Dictionary<FieldDesc, RegisteredField>();
@@ -36,7 +38,7 @@ namespace ILToNative
 
         ILToNative.CppCodeGen.CppWriter _cppWriter = null;
 
-        public Compilation(TypeSystemContext typeSystemContext, CompilationOptions options)
+        public Compilation(CompilerTypeSystemContext typeSystemContext, CompilationOptions options)
         {
             _typeSystemContext = typeSystemContext;
             _options = options;
@@ -44,7 +46,7 @@ namespace ILToNative
             _nameMangler = new NameMangler(this);
         }
 
-        public TypeSystemContext TypeSystemContext
+        public CompilerTypeSystemContext TypeSystemContext
         {
             get
             {
@@ -87,6 +89,14 @@ namespace ILToNative
             get
             {
                 return _options.IsCppCodeGen;
+            }
+        }
+
+        internal CompilationOptions Options
+        {
+           get
+            {
+                return _options;
             }
         }
 
@@ -266,6 +276,8 @@ namespace ILToNative
             _mainMethod = mainMethod;
             AddMethod(mainMethod);
 
+            AddWellKnownTypes();
+
             while (_methodsThatNeedsCompilation != null)
             {
                 CompileMethods();
@@ -281,6 +293,13 @@ namespace ILToNative
             {
                 OutputCode();
             }
+        }
+
+        private void AddWellKnownTypes()
+        {
+            var stringType = TypeSystemContext.GetWellKnownType(WellKnownType.String);
+            AddType(stringType);
+            MarkAsConstructed(stringType);
         }
 
         public void AddMethod(MethodDesc method)
@@ -360,6 +379,13 @@ namespace ILToNative
             }
         }
 
+        internal int AddToStringTable(string str)
+        {
+            int id;
+            if (!_stringTable.TryGetValue(str, out id))
+                _stringTable.Add(str, id = _stringTable.Count);
+            return id;
+        }
 
         struct ReadyToRunHelperKey : IEquatable<ReadyToRunHelperKey>
         {

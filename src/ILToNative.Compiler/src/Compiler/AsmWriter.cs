@@ -30,13 +30,20 @@ namespace ILToNative
             Out.WriteLine();
 
             OutputReadyToHelpers();
-
             OutputEETypes();
 
             Out.WriteLine();
             Out.WriteLine(".data");
 
-            OutputStatics();
+            OutputStrings();
+
+            Out.WriteLine();
+            Out.WriteLine("// Non-GC statics");
+            OutputNonGCStatics();
+
+            Out.WriteLine();
+            Out.WriteLine("// GC statics");
+            OutputGCStatics();
 
             Out.Dispose();
         }
@@ -96,6 +103,12 @@ namespace ILToNative
                         targetName = ((JitHelper)target).MangledName;
                     }
                     else
+                    if (target is string)
+                    {
+                        int id = AddToStringTable((string)target);
+                        targetName = "__str" + id;
+                    }
+                    else
                     {
                         // TODO:
                         throw new NotImplementedException();
@@ -108,6 +121,17 @@ namespace ILToNative
                             Out.WriteLine(targetName);
                             i += 7;
                             break;
+
+                        // REVIEW: I believe the JIT is emitting 0x3 instead of 0xA
+                        // for x64, because emitter from x86 is ported for RyuJIT.
+                        // I will consult with Bruce and if he agrees, I will delete
+                        // this "case" duplicated by IMAGE_REL_BASED_DIR64.
+                        case 0x03: // IMAGE_REL_BASED_HIGHLOW
+                            Out.Write(".quad ");
+                            Out.WriteLine(targetName);
+                            i += 7;
+                            break;
+
                         case 0x10:
                             if (code[i] != 0xE8) // call
                                 throw new NotImplementedException();
@@ -248,6 +272,15 @@ namespace ILToNative
                         Out.WriteLine("ret");
                         break;
 
+                    case ReadyToRunHelperId.GetGCStaticBase:
+                        Out.Write("leaq __GCStaticBase_");
+                        Out.Write(NameMangler.GetMangledTypeName((TypeDesc)helper.Target));
+                        Out.WriteLine("(%rip), %rax");
+                        Out.WriteLine("mov (%rax), %rax");
+                        Out.WriteLine("mov (%rax), %rax"); // RAX is now a GC pointer
+                        Out.WriteLine("ret");
+                        break;
+
                     default:
                         throw new NotImplementedException();
                 }
@@ -257,46 +290,81 @@ namespace ILToNative
 
         void OutputEETypes()
         {
-            foreach (var t in _registeredTypes.Values)
+            foreach (RegisteredType t in _registeredTypes.Values)
             {
                 if (!t.IncludedInCompilation)
                     continue;
-
-                Out.WriteLine(".align 16");
-                Out.Write("__EEType_");
-                Out.Write(NameMangler.GetMangledTypeName(t.Type));
-                Out.WriteLine(":");
-
-                if (t.Type.IsArray && ((ArrayType)t.Type).Rank == 1)
-                {
-                    Out.Write(".word ");
-                    Out.WriteLine(t.Type.GetElementSize()); // m_ComponentSize
-                    Out.WriteLine(".word 4");               // m_flags: IsArray(0x4)
-                    Out.WriteLine(".int 24");
-                }
-                else
-                {
-                    Out.WriteLine(".int 0, 24");
-                }
-
-                if (t.Type.BaseType != null)
-                {
-                    Out.Write(".quad __EEType_");
-                    Out.WriteLine(NameMangler.GetMangledTypeName(t.Type.BaseType));
-                }
-                else
-                {
-                    Out.WriteLine(".quad 0");
-                }
-
-                if (t.Constructed)
-                    OutputVirtualSlots(t.Type, t.Type);
-
-                Out.WriteLine();
+                OutputEEType(t.Type, t.Constructed);
             }
         }
 
-        void OutputStatics()
+        void OutputEEType(TypeDesc type, bool isConstructed)
+        {
+            Out.WriteLine(".align 16");
+            Out.Write("__EEType_");
+            Out.Write(NameMangler.GetMangledTypeName(type));
+            Out.WriteLine(":");
+
+            if (type.IsArray && ((ArrayType)type).Rank == 1)
+            {
+                Out.Write(".word ");
+                Out.WriteLine(type.GetElementSize());   // m_ComponentSize
+                Out.WriteLine(".word 4");               // m_flags: IsArray(0x4)
+                Out.WriteLine(".int 24");
+            }
+            else
+            {
+                Out.WriteLine(".int 0, 24");
+            }
+
+            if (type.BaseType != null)
+            {
+                Out.Write(".quad __EEType_");
+                Out.WriteLine(NameMangler.GetMangledTypeName(type.BaseType));
+            }
+            else
+            {
+                Out.WriteLine(".quad 0");
+            }
+
+            if (isConstructed)
+                OutputVirtualSlots(type, type);
+
+            Out.WriteLine();
+        }
+
+
+        void OutputStrings()
+        {
+            var strType = TypeSystemContext.GetWellKnownType(WellKnownType.String);
+
+            Out.Write(".global __EEType_");
+            Out.WriteLine(NameMangler.GetMangledTypeName(strType));
+
+            Out.WriteLine(".global __str_fixup");
+            Out.WriteLine(".global __str_fixup_end");
+            Out.WriteLine("__str_fixup:");
+            foreach (var se in _stringTable)
+            {
+                Out.Write("__str");
+                Out.Write(se.Value);
+                Out.Write(": .quad __str_table_entry");
+                Out.WriteLine(se.Value);
+            }
+            Out.WriteLine("__str_fixup_end:");
+
+            Action<byte> byteWriter = (byte b) => { Out.WriteLine(".byte " + b); };
+            AsmStringWriter nf = (_stringTable.Count > 0) ? new AsmStringWriter(byteWriter) : null;
+            foreach (var se in _stringTable)
+            {
+                Out.Write("__str_table_entry");
+                Out.Write(se.Value);
+                Out.WriteLine(":");
+                nf.WriteString(se.Key);               
+            }
+        }
+
+        void OutputNonGCStatics()
         {
             foreach (var t in _registeredTypes.Values)
             {
@@ -319,6 +387,73 @@ namespace ILToNative
                     Out.WriteLine(".byte 0");
                     Out.WriteLine(".endr");
                     Out.WriteLine();
+                }
+            }
+        }
+
+        void OutputGCStatics()
+        {
+            // Emit an array of GCHandle-sized elements for each type with GC statics
+            // Each element will be initially pointing at the pseudo EEType for the static.
+            // At runtime, it will be replaced by a GC handle to the GC-heap allocated object.
+
+            Out.WriteLine(".global __GCStaticRegionStart");
+            Out.WriteLine("__GCStaticRegionStart:");
+
+            foreach (var t in _registeredTypes.Values)
+            {
+                if (!t.IncludedInCompilation)
+                    continue;
+
+                var type = t.Type as MetadataType;
+                if (type == null)
+                    continue;
+
+                if (type.GCStaticFieldSize > 0)
+                {
+                    Out.Write("__GCStaticBase_");
+                    Out.Write(NameMangler.GetMangledTypeName(type));
+                    Out.WriteLine(":");
+                    Out.Write(".quad ");
+                    Out.Write("__GCStaticEEType_");
+                    Out.Write(NameMangler.GetMangledTypeName(type));
+                    Out.WriteLine();
+                }
+            }        
+
+            Out.WriteLine(".global __GCStaticRegionEnd");
+            Out.WriteLine("__GCStaticRegionEnd:");
+
+            // Next emit a GCDesc followed by the size of the region described by the GCDesc
+            // for each type with GC statics.
+
+            // It should be possible to intern these at some point.
+
+            foreach (var t in _registeredTypes.Values)
+            {
+                if (!t.IncludedInCompilation)
+                    continue;
+
+                var type = t.Type as MetadataType;
+                if (type == null)
+                    continue;
+
+                if (type.GCStaticFieldSize > 0)
+                {
+                    // numSeries
+                    Out.WriteLine(".quad 0");
+
+                    Out.Write("__GCStaticEEType_");
+                    Out.Write(NameMangler.GetMangledTypeName(type));
+                    Out.WriteLine(":");
+                    Out.WriteLine(".int 0");
+                    Out.Write(".int ");
+
+                    // GC requires a minimum object size
+                    int minimumObjectSize = type.Context.Target.PointerSize * 3;
+                    int gcStaticSize = Math.Max(type.GCStaticFieldSize, minimumObjectSize);
+
+                    Out.WriteLine(gcStaticSize);
                 }
             }
         }

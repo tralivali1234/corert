@@ -118,24 +118,19 @@ namespace ILToNative.CppCodeGen
                 argCount++;
 
             List<string> parameterNames = null;
-#if TODO // PDBs
-            if (ParameterNamesCallback != null)
+            IEnumerable<string> parameters = _compilation.TypeSystemContext.GetParameterNamesForMethod(method);
+            if (parameters != null)
             {
-                IEnumerable<string> parameters = ParameterNamesCallback(method);
-                if (parameters != null)
+                parameterNames = new List<string>(parameters);
+                if (parameterNames.Count != 0)
                 {
-                    parameterNames = new List<string>(parameters);
-                    if (parameterNames.Count != 0)
-                    {
-                        System.Diagnostics.Debug.Assert(parameterNames.Count == argCount);
-                    }
-                    else
-                    {
-                        parameterNames = null;
-                    }
+                    System.Diagnostics.Debug.Assert(parameterNames.Count == argCount);
+                }
+                else
+                {
+                    parameterNames = null;
                 }
             }
-#endif
 
             for (int i = 0; i < argCount; i++)
             {
@@ -194,24 +189,19 @@ namespace ILToNative.CppCodeGen
                 argCount++;
 
             List<string> parameterNames = null;
-#if TODO // PDBs
-            if (ParameterNamesCallback != null)
+            IEnumerable<string> parameters = _compilation.TypeSystemContext.GetParameterNamesForMethod(method);
+            if (parameters != null)
             {
-                IEnumerable<string> parameters = ParameterNamesCallback(method);
-                if (parameters != null)
+                parameterNames = new List<string>(parameters);
+                if (parameterNames.Count != 0)
                 {
-                    parameterNames = new List<string>(parameters);
-                    if (parameterNames.Count != 0)
-                    {
-                        System.Diagnostics.Debug.Assert(parameterNames.Count == argCount);
-                    }
-                    else
-                    {
-                        parameterNames = null;
-                    }
+                    System.Diagnostics.Debug.Assert(parameterNames.Count == argCount);
+                }
+                else
+                {
+                    parameterNames = null;
                 }
             }
-#endif
 
             for (int i = 0; i < argCount; i++)
             {
@@ -247,11 +237,16 @@ namespace ILToNative.CppCodeGen
             return _compilation.NameMangler.GetMangledMethodName(method);
         }
 
+        public string GetCppFieldName(FieldDesc field)
+        {
+            return _compilation.NameMangler.SanitizeName(field.Name);
+        }
+
         public string GetCppStaticFieldName(FieldDesc field)
         {
             TypeDesc type = field.OwningType;
             string typeName = GetCppTypeName(type);
-            return typeName.Replace("::", "__") + "__" + SanitizeName(field.Name);
+            return typeName.Replace("::", "__") + "__" + _compilation.NameMangler.SanitizeName(field.Name);
         }
 
         enum SpecialMethodKind
@@ -365,34 +360,28 @@ namespace ILToNative.CppCodeGen
                 return;
             }
 
-            var ilImporter = new ILImporter(_compilation, this, method, methodIL);
-
-#if TODO // PDBS
-            if (SequencePointsCallback != null)
-            {
-                IEnumerable<ILSequencePoint> sequencePoints = SequencePointsCallback(method);
-                if (sequencePoints != null)
-                    ilImporter.SetSequencePoints(sequencePoints);
-            }
-
-            if (LocalVariablesCallback != null)
-            {
-                IEnumerable<LocalVariable> localVariables = LocalVariablesCallback(method);
-                if (localVariables != null)
-                    ilImporter.SetLocalVariables(localVariables);
-            }
-
-            if (ParameterNamesCallback != null)
-            {
-                IEnumerable<string> parameters = ParameterNamesCallback(method);
-                if (parameters != null)
-                    ilImporter.SetParameterNames(parameters);
-            }
-#endif
-
             string methodCode;
             try
             {
+                var ilImporter = new ILImporter(_compilation, this, method, methodIL);
+
+                CompilerTypeSystemContext typeSystemContext = _compilation.TypeSystemContext;
+
+                if (!_compilation.Options.NoLineNumbers)
+                {
+                    IEnumerable<ILSequencePoint> sequencePoints = typeSystemContext.GetSequencePointsForMethod(method);
+                    if (sequencePoints != null)
+                        ilImporter.SetSequencePoints(sequencePoints);
+                }
+
+                IEnumerable<LocalVariable> localVariables = typeSystemContext.GetLocalVariableNamesForMethod(method);
+                if (localVariables != null)
+                    ilImporter.SetLocalVariables(localVariables);
+
+                IEnumerable<string> parameters = typeSystemContext.GetParameterNamesForMethod(method);
+                if (parameters != null)
+                    ilImporter.SetParameterNames(parameters);
+
                 methodCode = ilImporter.Compile();
             }
             catch (Exception e)
@@ -403,17 +392,6 @@ namespace ILToNative.CppCodeGen
             }
 
             _compilation.GetRegisteredMethod(method).MethodCode = methodCode;
-        }
-
-        // Turn a name into a valid CPP identifier
-        private static string SanitizeName(string s)
-        {
-            // TODO: Handle Unicode, etc.
-            s = s.Replace("`", "_");
-            s = s.Replace("<", "_");
-            s = s.Replace(">", "_");
-            s = s.Replace("$", "_");
-            return s;
         }
 
         TextWriter Out
@@ -605,7 +583,7 @@ namespace ILToNative.CppCodeGen
                     }
                     else
                     {
-                        Out.WriteLine(GetCppSignatureTypeName(field.FieldType) + " " + field.Name + ";");
+                        Out.WriteLine(GetCppSignatureTypeName(field.FieldType) + " " + GetCppFieldName(field) + ";");
                     }
                 }
                 if (t.Type.GetMethod(".cctor", null) != null)
@@ -693,7 +671,9 @@ namespace ILToNative.CppCodeGen
             sb.Append(GetCppMethodName(method));
             sb.Append("(void * pThis) { return (__slot__");
             sb.Append(GetCppMethodName(method));
-            sb.Append(")(((System::Delegate *)pThis)->m_functionPointer);");
+            sb.Append(")(((");
+            sb.Append(GetCppSignatureTypeName(_compilation.TypeSystemContext.GetWellKnownType(WellKnownType.MulticastDelegate)));
+            sb.Append(")pThis)->m_functionPointer);");
             sb.AppendLine(" };");
 
             return sb.ToString();

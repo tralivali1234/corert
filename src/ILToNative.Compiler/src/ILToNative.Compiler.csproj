@@ -25,6 +25,7 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Compiler\AsmStringWriter.cs" />
     <Compile Include="Compiler\AsmWriter.cs" />
     <Compile Include="Compiler\Compilation.cs" />
     <Compile Include="Compiler\CompilerTypeSystemContext.cs" />
@@ -33,6 +34,7 @@
     <Compile Include="Compiler\MethodCode.cs" />
     <Compile Include="Compiler\MethodExtensions.cs" />
     <Compile Include="Compiler\NameMangler.cs" />
+    <Compile Include="Compiler\PdbSymbolProvider.cs" />
     <Compile Include="Compiler\ReadyToRunHelper.cs" />
     <Compile Include="Compiler\RegisteredField.cs" />
     <Compile Include="Compiler\RegisteredMethod.cs" />
