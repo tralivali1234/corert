@@ -1,37 +1,29 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // RWLock.cpp -- adapted from CLR SimpleRWLock.cpp
 //
 #include "common.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
-#include "static_check.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "holder.h"
-#include "crst.h"
+#include "Crst.h"
 #include "event.h"
-#include "rwlock.h"
+#include "RWLock.h"
 #include "threadstore.h"
-#include "runtimeinstance.h"
-#endif // !DACCESS_COMPILE
+#include "RuntimeInstance.h"
 
 // Configurable constants used across our spin locks
 // Initialization here is necessary so that we have meaningful values before the runtime is started
@@ -104,10 +96,6 @@ ReaderWriterLock::ReaderWriterLock() :
 
 
 #ifndef DACCESS_COMPILE
-
-// defined in gcrhenv.cpp
-UInt32_BOOL __SwitchToThread(UInt32 dwSleepMSec, UInt32 dwSwitchCount);
-extern SYSTEM_INFO g_SystemInfo;
 
 // Attempt to take the read lock, but do not wait if a writer has the lock.
 // Release the lock if successfully acquired.  Returns true if the lock was

@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // This header contains the definition of an interface between the GC/HandleTable portions of the Redhawk
@@ -20,18 +19,17 @@
 
 #ifndef DACCESS_COMPILE
 // Global data cells exported by the GC.
-extern "C" unsigned int *g_card_table;
 extern "C" unsigned char *g_ephemeral_low;
 extern "C" unsigned char *g_ephemeral_high;
 extern "C" unsigned char *g_lowest_address;
 extern "C" unsigned char *g_highest_address;
 #endif
 
-struct alloc_context;
+struct gc_alloc_context;
 class MethodInfo;
 struct REGDISPLAY;
 class Thread;
-enum GCRefKind;
+enum GCRefKind : unsigned char;
 class ICodeManager;
 class EEType;
 
@@ -123,23 +121,8 @@ public:
     // todo: figure out the final error reporting strategy
     static bool InitializeSubsystems(GCType gcType);
 
-    // Allocate an object on the GC heap.
-    //  pThread         -  current Thread
-    //  cbSize          -  size in bytes of the final object
-    //  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
-    //  pEEType         -  type of the object
-    // Returns a pointer to the object allocated or NULL on failure.
-    static void* Alloc(Thread *pThread, UIntNative cbSize, UInt32 uFlags, EEType *pEEType);
-
-    // Allocate an object on the large GC heap. Used when you want to force an allocation on the large heap
-    // that wouldn't normally go there (e.g. objects containing double fields).
-    //  cbSize          -  size in bytes of the final object
-    //  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
-    // Returns a pointer to the object allocated or NULL on failure.
-    static void* AllocLarge(UIntNative cbSize, UInt32 uFlags);
-
-    static void InitAllocContext(alloc_context * pAllocContext);
-    static void ReleaseAllocContext(alloc_context * pAllocContext);
+    static void InitAllocContext(gc_alloc_context * pAllocContext);
+    static void ReleaseAllocContext(gc_alloc_context * pAllocContext);
 
     static void WaitForGCCompletion();
 
@@ -149,7 +132,7 @@ public:
 
     static void EnumGcRefs(ICodeManager * pCodeManager,
                            MethodInfo * pMethodInfo, 
-                           UInt32 codeOffset,
+                           PTR_VOID safePointAddress,
                            REGDISPLAY * pRegisterSet,
                            void * pfnEnumCallback,
                            void * pvCallbackData);
@@ -158,8 +141,6 @@ public:
                                                  PTR_RtuObjectRef pUpperBound,
                                                  void * pfnEnumCallback,
                                                  void * pvCallbackData);
-
-    static void GarbageCollect(UInt32 uGeneration, UInt32 uMode);
 
     static GcSegmentHandle RegisterFrozenSection(void * pSection, UInt32 SizeSection);
     static void UnregisterFrozenSection(GcSegmentHandle segment);
@@ -183,11 +164,6 @@ public:
     static GcScanObjectFunction GetCurrentScanCallbackFunction();
     static void* GetCurrentScanContext();
 
-    // If the class library has requested it, call this method on clean shutdown (i.e. return from Main) to
-    // perform a final pass of finalization where all finalizable objects are processed regardless of whether
-    // they are still rooted.
-    static void ShutdownFinalization();
-
     // Returns size GCDesc. Used by type cloning.
     static UInt32 GetGCDescSize(void * pType);
 
@@ -199,7 +175,7 @@ private:
     // The EEType for the last allocation.  This value is used inside of the GC allocator
     // to emit allocation ETW events with type information.  We set this value unconditionally to avoid
     // race conditions where ETW is enabled after the value is set.
-    __declspec(thread) static EEType * tls_pLastAllocationEEType;
+    DECLSPEC_THREAD static EEType * tls_pLastAllocationEEType;
 };
 
 #endif // __GCRHINTERFACE_INCLUDED

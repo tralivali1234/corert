@@ -1,11 +1,13 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-
-using System;
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 namespace Internal.TypeSystem
 {
-    public sealed class ByRefType : ParameterizedType
+    /// <summary>
+    /// Represents a managed pointer type.
+    /// </summary>
+    public sealed partial class ByRefType : ParameterizedType
     {
         internal ByRefType(TypeDesc parameter)
             : base(parameter)
@@ -19,19 +21,12 @@ namespace Internal.TypeSystem
 
         public override TypeDesc InstantiateSignature(Instantiation typeInstantiation, Instantiation methodInstantiation)
         {
-            TypeDesc instantiatedParameterType = this.ParameterType.InstantiateSignature(typeInstantiation, methodInstantiation);
-            return instantiatedParameterType.MakeByRefType();
-        }
+            TypeDesc parameterType = this.ParameterType;
+            TypeDesc instantiatedParameterType = parameterType.InstantiateSignature(typeInstantiation, methodInstantiation);
+            if (instantiatedParameterType != parameterType)
+                return Context.GetByRefType(instantiatedParameterType);
 
-        public override TypeDesc GetTypeDefinition()
-        {
-            TypeDesc result = this;
-
-            TypeDesc parameterDef = this.ParameterType.GetTypeDefinition();
-            if (parameterDef != this.ParameterType)
-                result = parameterDef.MakeByRefType();
-
-            return result;
+            return this;
         }
 
         protected override TypeFlags ComputeTypeFlags(TypeFlags mask)
@@ -44,6 +39,8 @@ namespace Internal.TypeSystem
                 if (this.ParameterType.ContainsGenericVariables)
                     flags |= TypeFlags.ContainsGenericVariables;
             }
+
+            flags |= TypeFlags.HasGenericVarianceComputed;
 
             return flags;
         }

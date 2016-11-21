@@ -1,44 +1,49 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Miscellaneous unmanaged helpers called by managed code.
 //
 
 #include "common.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-#include "commontypes.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
-#include "static_check.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
-#include "crst.h"
+#include "Crst.h"
 #include "rhbinder.h"
-#include "rwlock.h"
-#include "runtimeinstance.h"
+#include "RWLock.h"
+#include "RuntimeInstance.h"
 #include "regdisplay.h"
 #include "gcrhinterface.h"
 #include "varint.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "event.h"
 #include "threadstore.h"
+#include "threadstore.inl"
+#include "thread.inl"
 #include "gcrhinterface.h"
+#include "shash.h"
 #include "module.h"
 #include "eetype.h"
-#include "objectlayout.h"
-#include "genericinstance.h"
+#include "ObjectLayout.h"
 #include "slist.inl"
 #include "eetype.inl"
-#include "commonmacros.inl"
+#include "CommonMacros.inl"
+#include "Volatile.h"
+#include "GCMemoryHelpers.h"
+#include "GCMemoryHelpers.inl"
+
+COOP_PINVOKE_HELPER(void, RhDebugBreak, ())
+{
+    PalDebugBreak();
+}
 
 // Busy spin for the given number of iterations.
 COOP_PINVOKE_HELPER(void, RhSpinWait, (Int32 iterations))
@@ -48,40 +53,13 @@ COOP_PINVOKE_HELPER(void, RhSpinWait, (Int32 iterations))
 }
 
 // Yield the cpu to another thread ready to process, if one is available.
-COOP_PINVOKE_HELPER(UInt32_BOOL, RhYield, ())
+EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhYield()
 {
+    // This must be called via p/invoke -- it's a wait operation and we don't want to block thread suspension on this.
+    ASSERT_MSG(!ThreadStore::GetCurrentThread()->IsCurrentThreadInCooperativeMode(),
+        "You must p/invoke to RhYield");
+
     return PalSwitchToThread();
-}
-
-// Get the rarely used (optional) flags of an EEType. If they're not present 0 will be returned.
-COOP_PINVOKE_HELPER(UInt32, RhpGetEETypeRareFlags, (EEType * pEEType))
-{
-    return pEEType->get_RareFlags();
-}
-
-// For an ICastable type return a pointer to code that implements ICastable.IsInstanceOfInterface.
-COOP_PINVOKE_HELPER(UIntNative, RhpGetICastableIsInstanceOfInterfaceMethod, (EEType * pEEType))
-{
-    ASSERT(pEEType->IsICastable());
-    return (UIntNative)pEEType->get_ICastableIsInstanceOfInterfaceMethod();
-}
-
-// For an ICastable type return a pointer to code that implements ICastable.ICastableGetImplType.
-COOP_PINVOKE_HELPER(UIntNative, RhpGetICastableGetImplTypeMethod, (EEType * pEEType))
-{
-    ASSERT(pEEType->IsICastable());
-    return (UIntNative)pEEType->get_ICastableGetImplTypeMethod();
-}
-
-// Return the unboxed size of a value type.
-COOP_PINVOKE_HELPER(UInt32, RhGetValueTypeSize, (EEType * pEEType))
-{
-    ASSERT(pEEType->get_IsValueType());
-
-    // get_BaseSize returns the GC size including space for the sync block index field, the EEType* and
-    // padding for GC heap alignment. Must subtract all of these to get the size used for locals, array
-    // elements or fields of another type.
-    return pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + pEEType->get_ValueTypeFieldPadding());
 }
 
 // Return the DispatchMap pointer of a type
@@ -136,14 +114,15 @@ COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromPointer, (PTR_VOID pPointerVal))
 
 COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromEEType, (EEType * pEEType))
 {
-    // Runtime allocated EETypes have no associated module, but class libraries shouldn't be able to get to
-    // any of these since they're currently only used for the canonical version of a generic EEType and we
-    // provide no means to go from the cloned version to the canonical version.
-    ASSERT(!pEEType->IsRuntimeAllocated());
-
+#if CORERT
+    return (HANDLE)(pEEType->GetTypeManager());
+#else
     // For dynamically created types, return the module handle that contains the template type
     if (pEEType->IsDynamicType())
         pEEType = pEEType->get_DynamicTemplateType();
+
+    if (pEEType->get_DynamicModule() != nullptr)
+        return nullptr;
 
     FOREACH_MODULE(pModule)
     {
@@ -155,10 +134,27 @@ COOP_PINVOKE_HELPER(HANDLE, RhGetModuleFromEEType, (EEType * pEEType))
     // We should never get here (an EEType not located in any module) so fail fast to indicate the bug.
     RhFailFast();
     return NULL;
+#endif // !CORERT
 }
 
 COOP_PINVOKE_HELPER(Boolean, RhFindBlob, (HANDLE hOsModule, UInt32 blobId, UInt8 ** ppbBlob, UInt32 * pcbBlob))
 {
+#if CORERT
+    ReadyToRunSectionType section =
+        (ReadyToRunSectionType)((UInt32)ReadyToRunSectionType::ReadonlyBlobRegionStart + blobId);
+    ASSERT(section <= ReadyToRunSectionType::ReadonlyBlobRegionEnd);
+
+    TypeManager* pModule = (TypeManager*)hOsModule;
+
+    int length;
+    void* pBlob;
+    pBlob = pModule->GetModuleSection(section, &length);
+
+    *ppbBlob = (UInt8*)pBlob;
+    *pcbBlob = (UInt32)length;
+
+    return pBlob != NULL;
+#else
     // Search for the Redhawk module contained by the OS module.
     FOREACH_MODULE(pModule)
     {
@@ -199,6 +195,7 @@ COOP_PINVOKE_HELPER(Boolean, RhFindBlob, (HANDLE hOsModule, UInt32 blobId, UInt8
     RhFailFast();
 
     return FALSE;
+#endif // !CORERT
 }
 
 // This helper is not called directly but is used by the implementation of RhpCheckCctor to locate the
@@ -225,16 +222,6 @@ COOP_PINVOKE_HELPER(void *, GetClasslibCCtorCheck, (void * pReturnAddress))
     return pCallback;
 }
 
-COOP_PINVOKE_HELPER(UInt8, RhpGetNullableEETypeValueOffset, (EEType * pEEType))
-{
-    return pEEType->GetNullableValueOffset();
-}
-
-COOP_PINVOKE_HELPER(EEType *, RhpGetNullableEEType, (EEType * pEEType))
-{
-    return pEEType->GetNullableType();
-}
-
 COOP_PINVOKE_HELPER(Boolean, RhpHasDispatchMap, (EEType * pEEType))
 {
     return pEEType->HasDispatchMap();
@@ -248,11 +235,6 @@ COOP_PINVOKE_HELPER(DispatchMap *, RhpGetDispatchMap, (EEType * pEEType))
 COOP_PINVOKE_HELPER(EEType *, RhpGetArrayBaseType, (EEType * pEEType))
 {
     return pEEType->GetArrayBaseType();
-}
-
-COOP_PINVOKE_HELPER(PTR_Code, RhpGetSealedVirtualSlot, (EEType * pEEType, UInt16 slot))
-{
-    return pEEType->get_SealedVirtualSlot(slot);
 }
 
 // Obtain the address of a thread static field for the current thread given the enclosing type and a field cookie
@@ -273,32 +255,20 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetThreadStaticFieldAddress, (EEType * pEEType, T
         // for each dynamically created type with thread statics. The TLS storage size allocated for each type
         // is the size of all the thread statics on that type. We use the field offset to get the thread static
         // data for that field on the current thread.
-        GenericInstanceDesc * pGID = pRuntimeInstance->LookupGenericInstance(pEEType);
-        ASSERT(pGID != NULL);
-        UInt8* pTlsStorage = ThreadStore::GetCurrentThread()->GetThreadLocalStorageForDynamicType(pGID->GetThreadStaticFieldStartOffset());
+        UInt8* pTlsStorage = ThreadStore::GetCurrentThread()->GetThreadLocalStorageForDynamicType(pEEType->get_DynamicThreadStaticOffset());
         ASSERT(pTlsStorage != NULL);
         return (pFieldCookie != NULL ? pTlsStorage + pFieldCookie->FieldOffset : pTlsStorage);
-    }
-    else if (!pRuntimeInstance->IsInStandaloneExeMode() && pEEType->IsGeneric())
-    {
-        // The tricky case is a thread static field on a generic type when we're not in standalone mode. In that
-        // case we need to lookup the GenericInstanceDesc for the type to locate its TLS static base
-        // offset (which unlike the case below has already been fixed up to account for COFF mode linking). The
-        // cookie then contains an offset from that base.
-        GenericInstanceDesc * pGID = pRuntimeInstance->LookupGenericInstance(pEEType);
-        uiFieldOffset = pGID->GetThreadStaticFieldStartOffset() + pFieldCookie->FieldOffset;
-
-        // The TLS index in the GenericInstanceDesc will always be 0 (unless we perform GID unification, which
-        // we don't today), so we'll need to get the TLS index from the header of the type's containing module.
-        Module * pModule = pRuntimeInstance->FindModuleByReadOnlyDataAddress(pEEType);
-        ASSERT(pModule != NULL);
-        uiTlsIndex = *pModule->GetModuleHeader()->PointerToTlsIndex;
     }
     else
     {
         // In all other cases the field cookie contains an offset from the base of all Redhawk thread statics
         // to the field. The TLS index and offset adjustment (in cases where the module was linked with native
         // code using .tls) is that from the exe module.
+
+        // In the separate compilation case, the generic unification logic should assure
+        // that the pEEType parameter passed in is indeed the "winner" of generic unification,
+        // not one of the "losers".
+        // TODO: come up with an assert to check this.
         Module * pModule = pRuntimeInstance->FindModuleByReadOnlyDataAddress(pEEType);
         if (pModule == NULL)
             pModule = pRuntimeInstance->FindModuleByDataAddress(pEEType);
@@ -313,7 +283,7 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetThreadStaticFieldAddress, (EEType * pEEType, T
     return ThreadStore::GetCurrentThread()->GetThreadLocalStorage(uiTlsIndex, uiFieldOffset);
 }
 
-#if TARGET_ARM
+#if _TARGET_ARM_
 //*****************************************************************************
 //  Extract the 16-bit immediate from ARM Thumb2 Instruction (format T2_N)
 //*****************************************************************************
@@ -359,7 +329,7 @@ inline Int32 GetThumb2BlRel24(UInt16 * p)
     // Sign-extend and return
     return (ret << 7) >> 7;
 }
-#endif // TARGET_ARM
+#endif // _TARGET_ARM_
 
 // Given a pointer to code, find out if this points to an import stub
 // or unboxing stub, and if so, return the address that stub jumps to
@@ -375,7 +345,7 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
 
         bool unboxingStub = false;
 
-#ifdef TARGET_AMD64
+#ifdef _TARGET_AMD64_
         UInt8 * pCode = pCodeOrg;
 
         // is this "add rcx,8"?
@@ -404,7 +374,7 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
         }
         return pCodeOrg;
 
-#elif TARGET_X86
+#elif _TARGET_X86_
         UInt8 * pCode = pCodeOrg;
 
         // is this "add ecx,4"?
@@ -432,7 +402,7 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
         }
         return pCodeOrg;
 
-#elif TARGET_ARM
+#elif _TARGET_ARM_
         const UInt16 THUMB_BIT = 1;
         UInt16 * pCode = (UInt16 *)((size_t)pCodeOrg & ~THUMB_BIT);
         // is this "adds r0,4"?
@@ -457,6 +427,8 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
             UInt8 * pTarget = (UInt8 *)(pCode + 2) + distToTarget + THUMB_BIT;
             return (UInt8 *)pTarget;
         }
+#elif _TARGET_ARM64_
+    PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
 #else
 #error 'Unsupported Architecture'
 #endif
@@ -466,173 +438,64 @@ COOP_PINVOKE_HELPER(UInt8 *, RhGetCodeTarget, (UInt8 * pCodeOrg))
     return pCodeOrg;
 }
 
-FORCEINLINE void ForwardGCSafeCopy(void * dest, const void *src, size_t len)
+// Given a pointer to code, find out if this points to a jump stub, and if so, return the address that stub jumps to
+COOP_PINVOKE_HELPER(UInt8 *, RhGetJmpStubCodeTarget, (UInt8 * pCodeOrg))
 {
-    // All parameters must be pointer-size-aligned
-    ASSERT(IS_ALIGNED(dest, sizeof(size_t)));
-    ASSERT(IS_ALIGNED(src, sizeof(size_t)));
-    ASSERT(IS_ALIGNED(len, sizeof(size_t)));
-
-    size_t size = len;
-    UInt8 * dmem = (UInt8 *)dest;
-    UInt8 * smem = (UInt8 *)src;
-
-    // regions must be non-overlapping
-    ASSERT(dmem <= smem || smem + size <= dmem);
-
-    // copy 4 pointers at a time 
-    while (size >= 4 * sizeof(size_t))
+    // Search for the module containing the code
+    FOREACH_MODULE(pModule)
     {
-        size -= 4 * sizeof(size_t);
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-        ((size_t *)dmem)[1] = ((size_t *)smem)[1];
-        ((size_t *)dmem)[2] = ((size_t *)smem)[2];
-        ((size_t *)dmem)[3] = ((size_t *)smem)[3];
-        smem += 4 * sizeof(size_t);
-        dmem += 4 * sizeof(size_t);
-    }
+        // If the code pointer doesn't point to a module's stub range,
+        // it can't be pointing to a stub
+        if (!pModule->ContainsStubAddress(pCodeOrg))
+            continue;
 
-    // copy 2 trailing pointers, if needed
-    if ((size & (2 * sizeof(size_t))) != 0)
-    {
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-        ((size_t *)dmem)[1] = ((size_t *)smem)[1];
-        smem += 2 * sizeof(size_t);
-        dmem += 2 * sizeof(size_t);
-    }
+#ifdef _TARGET_AMD64_
+        UInt8 * pCode = pCodeOrg;
 
-    // finish with one pointer, if needed
-    if ((size & sizeof(size_t)) != 0)
-    {
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-    }
-}
+        // if this is a jmp stub
+        if (pCode[0] == 0xe9)
+        {
+            // relative jump - dist is relative to the point *after* the instruction
+            Int32 distToTarget = *(Int32 *)&pCode[1];
+            UInt8 * target = pCode + 5 + distToTarget;
+            return target;
+        }
+        return pCodeOrg;
 
-FORCEINLINE void BackwardGCSafeCopy(void * dest, const void *src, size_t len)
-{
-    // All parameters must be pointer-size-aligned
-    ASSERT(IS_ALIGNED(dest, sizeof(size_t)));
-    ASSERT(IS_ALIGNED(src, sizeof(size_t)));
-    ASSERT(IS_ALIGNED(len, sizeof(size_t)));
+#elif _TARGET_X86_
+        UInt8 * pCode = pCodeOrg;
 
-    size_t size = len;
-    UInt8 * dmem = (UInt8 *)dest + len;
-    UInt8 * smem = (UInt8 *)src + len;
+        // if this is a jmp stub
+        if (pCode[0] == 0xe9)
+        {
+            // relative jump - dist is relative to the point *after* the instruction
+            Int32 distToTarget = *(Int32 *)&pCode[1];
+            UInt8 * pTarget = pCode + 5 + distToTarget;
+            return pTarget;
+        }
+        return pCodeOrg;
 
-    // regions must be non-overlapping
-    ASSERT(smem <= dmem || dmem + size <= smem);
-
-    // copy 4 pointers at a time 
-    while (size >= 4 * sizeof(size_t))
-    {
-        size -= 4 * sizeof(size_t);
-        smem -= 4 * sizeof(size_t);
-        dmem -= 4 * sizeof(size_t);
-        ((size_t *)dmem)[3] = ((size_t *)smem)[3];
-        ((size_t *)dmem)[2] = ((size_t *)smem)[2];
-        ((size_t *)dmem)[1] = ((size_t *)smem)[1];
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-    }
-
-    // copy 2 trailing pointers, if needed
-    if ((size & (2 * sizeof(size_t))) != 0)
-    {
-        smem -= 2 * sizeof(size_t);
-        dmem -= 2 * sizeof(size_t);
-        ((size_t *)dmem)[1] = ((size_t *)smem)[1];
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-    }
-
-    // finish with one pointer, if needed
-    if ((size & sizeof(size_t)) != 0)
-    {
-        smem -= sizeof(size_t);
-        dmem -= sizeof(size_t);
-        ((size_t *)dmem)[0] = ((size_t *)smem)[0];
-    }
-}
-
-// This function fills a piece of memory in a GC safe way.  It makes the guarantee
-// that it will fill memory in at least pointer sized chunks whenever possible.
-// Unaligned memory at the beginning and remaining bytes at the end are written bytewise.
-// We must make this guarantee whenever we clear memory in the GC heap that could contain 
-// object references.  The GC or other user threads can read object references at any time, 
-// clearing them bytewise can result in a read on another thread getting incorrect data.  
-FORCEINLINE void GCSafeFillMemory(void * mem, size_t size, size_t pv)
-{
-    UInt8 * memBytes = (UInt8 *)mem;
-    UInt8 * endBytes = &memBytes[size];
-
-    // handle unaligned bytes at the beginning 
-    while (!IS_ALIGNED(memBytes, sizeof(void *)) && (memBytes < endBytes))
-        *memBytes++ = (UInt8)pv;
-
-    // now write pointer sized pieces 
-    size_t nPtrs = (endBytes - memBytes) / sizeof(void *);
-    UIntNative* memPtr = (UIntNative*)memBytes;
-    for (size_t i = 0; i < nPtrs; i++)
-        *memPtr++ = pv;
-
-    // handle remaining bytes at the end 
-    memBytes = (UInt8*)memPtr;
-    while (memBytes < endBytes)
-        *memBytes++ = (UInt8)pv;
-}
-
-// This is a GC-safe variant of memcpy.  It guarantees that the object references in the GC heap are updated atomically.
-// This is required for type safety and proper operation of the background GC.
-//
-// USAGE:   1) The caller is responsible for performing the appropriate bulk write barrier.
-//          2) The caller is responsible for hoisting any null reference exceptions to a place where the hardware 
-//             exception can be properly translated to a managed exception.  This is handled by RhpCopyMultibyte.
-//          3) The caller must ensure that all three parameters are pointer-size-aligned.  This should be the case for
-//             value types which contain GC refs anyway, so if you want to copy structs without GC refs which might be
-//             unaligned, then you must use RhpCopyMultibyteNoGCRefs.
-COOP_PINVOKE_CDECL_HELPER(void *, memcpyGCRefs, (void * dest, const void *src, size_t len))
-{ 
-    // null pointers are not allowed (they are checked by RhpCopyMultibyte)
-    ASSERT(dest != nullptr);
-    ASSERT(src != nullptr);
-
-    ForwardGCSafeCopy(dest, src, len);
-
-    // memcpy returns the destination buffer
-    return dest;
-}
-
-// This function clears a piece of memory in a GC safe way.  It makes the guarantee that it will clear memory in at 
-// least pointer sized chunks whenever possible.  Unaligned memory at the beginning and remaining bytes at the end are 
-// written bytewise. We must make this guarantee whenever we clear memory in the GC heap that could contain object 
-// references.  The GC or other user threads can read object references at any time, clearing them bytewise can result 
-// in a read on another thread getting incorrect data.
-//
-// USAGE:  The caller is responsible for hoisting any null reference exceptions to a place where the hardware exception
-//         can be properly translated to a managed exception.
-COOP_PINVOKE_CDECL_HELPER(void *, RhpInitMultibyte, (void * mem, int c, size_t size))
-{ 
-    // The caller must do the null-check because we cannot take an AV in the runtime and translate it to managed.
-    ASSERT(mem != nullptr); 
-
-    UIntNative  bv = (UInt8)c;
-    UIntNative  pv = 0;
-
-    if (bv != 0)
-    {
-        pv = 
-#if (POINTER_SIZE == 8)
-            bv << 7*8 | bv << 6*8 | bv << 5*8 | bv << 4*8 |
+#elif _TARGET_ARM_
+        const UInt16 THUMB_BIT = 1;
+        UInt16 * pCode = (UInt16 *)((size_t)pCodeOrg & ~THUMB_BIT);
+        // if this is a jmp stub
+        if ((pCode[0] & 0xf800) == 0xf000 && (pCode[1] & 0xd000) == 0x9000)
+        {
+            Int32 distToTarget = GetThumb2BlRel24(pCode);
+            UInt8 * pTarget = (UInt8 *)(pCode + 2) + distToTarget + THUMB_BIT;
+            return (UInt8 *)pTarget;
+        }
+#elif _TARGET_ARM64_
+        PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
+#else
+#error 'Unsupported Architecture'
 #endif
-            bv << 3*8 | bv << 2*8 | bv << 1*8 | bv;
     }
+    END_FOREACH_MODULE;
 
-    GCSafeFillMemory(mem, size, pv);
+    return pCodeOrg;
+}
 
-    // memset returns the destination buffer
-    return mem;
-} 
-
-EXTERN_C void * __cdecl memmove(void *, const void *, size_t);
-EXTERN_C void REDHAWK_CALLCONV RhpBulkWriteBarrier(void* pMemStart, UInt32 cbMemSize);
 
 //
 // Return true if the array slice is valid
@@ -683,11 +546,11 @@ COOP_PINVOKE_HELPER(Boolean, RhpArrayCopy, (Array * pSourceArray, Int32 sourceIn
     if (pArrayType->HasReferenceFields())
     {
         if (pDestinationData <= pSourceData || pSourceData + size <= pDestinationData)
-            ForwardGCSafeCopy(pDestinationData, pSourceData, size);
+            InlineForwardGCSafeCopy(pDestinationData, pSourceData, size);
         else
-            BackwardGCSafeCopy(pDestinationData, pSourceData, size);
+            InlineBackwardGCSafeCopy(pDestinationData, pSourceData, size);
 
-        RhpBulkWriteBarrier(pDestinationData, (UInt32)size);
+        InlinedBulkWriteBarrier(pDestinationData, (UInt32)size);
     }
     else
     {
@@ -719,7 +582,7 @@ COOP_PINVOKE_HELPER(Boolean, RhpArrayClear, (Array * pArray, Int32 index, Int32 
     if (length == 0)
         return true;
 
-    GCSafeFillMemory((UInt8 *)pArray->GetArrayData() + index * componentSize, length * componentSize, 0);
+    InlineGCSafeFillMemory((UInt8 *)pArray->GetArrayData() + index * componentSize, length * componentSize, 0);
 
     return true;
 }
@@ -734,4 +597,61 @@ extern "C" void RhpUniversalTransition();
 COOP_PINVOKE_HELPER(void*, RhGetUniversalTransitionThunk, ())
 {
     return (void*)RhpUniversalTransition;
+}
+
+extern CrstStatic g_CastCacheLock;
+
+EXTERN_C REDHAWK_API void __cdecl RhpAcquireCastCacheLock()
+{
+    g_CastCacheLock.Enter();
+}
+
+EXTERN_C REDHAWK_API void __cdecl RhpReleaseCastCacheLock()
+{
+    g_CastCacheLock.Leave();
+}
+
+extern CrstStatic g_ThunkPoolLock;
+
+EXTERN_C REDHAWK_API void __cdecl RhpAcquireThunkPoolLock()
+{
+    g_ThunkPoolLock.Enter();
+}
+
+EXTERN_C REDHAWK_API void __cdecl RhpReleaseThunkPoolLock()
+{
+    g_ThunkPoolLock.Leave();
+}
+
+EXTERN_C Int32 __cdecl RhpCalculateStackTraceWorker(void* pOutputBuffer, UInt32 outputBufferLength);
+
+EXTERN_C REDHAWK_API Int32 __cdecl RhpGetCurrentThreadStackTrace(void* pOutputBuffer, UInt32 outputBufferLength)
+{
+    // This must be called via p/invoke rather than RuntimeImport to make the stack crawlable.
+
+    ThreadStore::GetCurrentThread()->SetupHackPInvokeTunnel();
+
+    return RhpCalculateStackTraceWorker(pOutputBuffer, outputBufferLength);
+}
+
+COOP_PINVOKE_HELPER(Boolean, RhpRegisterFrozenSegment, (void* pSegmentStart, UInt32 length))
+{
+    return RedhawkGCInterface::RegisterFrozenSection(pSegmentStart, length) != NULL;
+}
+
+#ifdef CORERT
+COOP_PINVOKE_HELPER(void*, RhpGetModuleSection, (TypeManager* pModule, Int32 headerId, Int32* length))
+{
+    return pModule->GetModuleSection((ReadyToRunSectionType)headerId, length);
+}
+
+COOP_PINVOKE_HELPER(void*, RhpCreateTypeManager, (void* pModuleHeader))
+{
+    return TypeManager::Create(pModuleHeader);
+}
+#endif
+
+COOP_PINVOKE_HELPER(void, RhGetCurrentThreadStackBounds, (PTR_VOID * ppStackLow, PTR_VOID * ppStackHigh))
+{
+    ThreadStore::GetCurrentThread()->GetStackBounds(ppStackLow, ppStackHigh);
 }

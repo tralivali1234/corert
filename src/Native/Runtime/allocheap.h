@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 #include "forward_declarations.h"
 
 #ifdef FEATURE_RWX_MEMORY
@@ -119,6 +118,6 @@ class AllocHeap
 typedef DPTR(AllocHeap) PTR_AllocHeap;
 
 //-------------------------------------------------------------------------------------------------
-void * __cdecl operator new(UIntNative n, AllocHeap * alloc);
-void * __cdecl operator new[](UIntNative n, AllocHeap * alloc);
+void * __cdecl operator new(size_t n, AllocHeap * alloc);
+void * __cdecl operator new[](size_t n, AllocHeap * alloc);
 

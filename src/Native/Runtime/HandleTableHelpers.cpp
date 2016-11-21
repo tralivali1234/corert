@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Helper functions that are p/invoked from redhawkm in order to expose handle table functionality to managed
@@ -10,9 +9,11 @@
 // binder has special knowledge of these methods and doesn't generate the normal code to transition out of the
 // runtime prior to the call.
 // 
+#include "common.h"
+#include "gcenv.h"
+#include "objecthandle.h"
+#include "RestrictedCallouts.h"
 
-#include "gcrhenv.h"
-#include "restrictedcallouts.h"
 
 COOP_PINVOKE_HELPER(OBJECTHANDLE, RhpHandleAlloc, (Object *pObject, int type))
 {

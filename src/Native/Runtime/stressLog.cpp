@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 // ---------------------------------------------------------------------------
 // StressLog.cpp
 //
@@ -10,34 +9,31 @@
 
 #include "common.h"
 #ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
+#include <windows.h>
 #include "sospriv.h"
 #endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
 #include "daccess.h"
-#include "stresslog.h"
+#include "stressLog.h"
 #include "holder.h"
-#include "crst.h"
-#include "assert.h"
+#include "Crst.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
-#include "rwlock.h"
+#include "RWLock.h"
 #include "event.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 
 template<typename T> inline T VolatileLoad(T const * pt) { return *(T volatile const *)pt; }
 template<typename T> inline void VolatileStore(T* pt, T val) { *(T volatile *)pt = val; }
-#endif
-
 
 #ifdef STRESS_LOG
 
@@ -100,7 +96,7 @@ const static unsigned __int64 RECYCLE_AGE = 0x40000000L;        // after a billi
 void StressLog::Initialize(unsigned facilities,  unsigned level, unsigned maxBytesPerThread, 
             unsigned maxBytesTotal, HANDLE hMod) 
 {
-#if !defined(USE_PORTABLE_HELPERS) // @TODO: disabled because of assumption that hMod is a module base address in stress log code
+#if !defined(CORERT) // @TODO: CORERT: disabled because of assumption that hMod is a module base address in stress log code
     if (theLog.MaxSizePerThread != 0)
     {
         // guard ourself against multiple initialization. First init wins.
@@ -109,7 +105,7 @@ void StressLog::Initialize(unsigned facilities,  unsigned level, unsigned maxByt
 
     g_pStressLog = &theLog;
 
-    theLog.pLock = new CrstStatic();
+    theLog.pLock = new (nothrow) CrstStatic();
     theLog.pLock->Init(CrstStressLog);
     if (maxBytesPerThread < STRESSLOG_CHUNK_SIZE)
     {
@@ -142,7 +138,7 @@ void StressLog::Initialize(unsigned facilities,  unsigned level, unsigned maxByt
         StressLogChunk::s_LogChunkHeap = PalGetProcessHeap ();
     }
     _ASSERTE (StressLogChunk::s_LogChunkHeap);
-#endif // !defined(USE_PORTABLE_HELPERS)
+#endif // !defined(CORERT)
 }
 
 /*********************************************************************************/
@@ -225,7 +221,7 @@ ThreadStressLog* StressLog::CreateThreadStressLogHelper(Thread * pThread) {
     }
 
     if (msgs == 0)  {
-        msgs = new ThreadStressLog();
+        msgs = new (nothrow) ThreadStressLog();
 
         if (msgs == 0 ||!msgs->IsValid ()) 
         {
@@ -358,7 +354,7 @@ void ThreadStressLog::LogMsg ( UInt32 facility, int cArgs, const char* format, v
         msg->args[i] = data;
     }
 
-    ASSERT(IsValid() && threadId == GetCurrentThreadId ());
+    ASSERT(IsValid() && threadId == PalGetCurrentThreadIdForLogging());
 }
 
 
@@ -366,13 +362,13 @@ void ThreadStressLog::Activate (Thread * pThread)
 {
     _ASSERTE(pThread != NULL);
     //there is no need to zero buffers because we could handle garbage contents
-    threadId = PalGetCurrentThreadId ();       
+    threadId = PalGetCurrentThreadIdForLogging(); 
     isDead = FALSE;        
     curWriteChunk = chunkListTail;
     curPtr = (StressMsg *)curWriteChunk->EndPtr ();
     writeHasWrapped = FALSE;
     this->pThread = pThread;
-    ASSERT(pThread->GetPalThreadId() == threadId);
+    ASSERT(pThread->IsCurrentThread());
 }
 
 /* static */
@@ -437,7 +433,7 @@ bool StressLog::Initialize()
             // avoid repeated calls into this function
             StressLogChunk * head = curThreadStressLog->chunkListHead;
             StressLogChunk * curChunk = head;
-            BOOL curPtrInitialized = FALSE;
+            bool curPtrInitialized = false;
             do
             {
                 if (!curChunk->IsValid ())
@@ -448,8 +444,8 @@ bool StressLog::Initialize()
                 if (!curPtrInitialized && curChunk == curThreadStressLog->curWriteChunk)
                 {
                     // adjust curPtr to the debugger's address space
-                    curThreadStressLog->curPtr = (StressMsg *)((BYTE *)curChunk + ((BYTE *)curThreadStressLog->curPtr - (BYTE *)PTR_HOST_TO_TADDR(curChunk)));
-                    curPtrInitialized = TRUE;
+                    curThreadStressLog->curPtr = (StressMsg *)((UInt8 *)curChunk + ((UInt8 *)curThreadStressLog->curPtr - (UInt8 *)PTR_HOST_TO_TADDR(curChunk)));
+                    curPtrInitialized = true;
                 }
                 
                 curChunk = curChunk->next;
@@ -458,7 +454,7 @@ bool StressLog::Initialize()
             if (!curPtrInitialized)
             {
                 delete curThreadStressLog;
-                return FALSE;
+                return false;
             }
 
             // adjust readPtr and curPtr if needed
@@ -466,7 +462,7 @@ bool StressLog::Initialize()
         }
         curThreadStressLog = curThreadStressLog->next;
     }
-    return TRUE;
+    return true;
 }
 
 void StressLog::ResetForRead()
@@ -547,7 +543,9 @@ void StressLog::EnumerateStressMsgs(/*STRESSMSGCALLBACK*/void* smcbWrapper, /*EN
             // Pass a copy of the args to the callback to avoid foreign code overwriting the stress log 
             // entries (this was the case for %s arguments)
             memcpy_s(argsCopy, sizeof(argsCopy), latestMsg->args, (latestMsg->numberOfArgs)*sizeof(void*));
-            if (!smcb(latestLog->threadId, deltaTime, latestMsg->facility, format, argsCopy, token))
+
+            // @TODO: CORERT: Truncating threadId to 32-bit
+            if (!smcb((UINT32)latestLog->threadId, deltaTime, latestMsg->facility, format, argsCopy, token))
                 break;
         }
 
@@ -555,11 +553,15 @@ void StressLog::EnumerateStressMsgs(/*STRESSMSGCALLBACK*/void* smcbWrapper, /*EN
         if (latestLog->CompletedDump())
         {
             latestLog->readPtr = NULL;
-            if (!etcb(latestLog->threadId, token))
+
+            // @TODO: CORERT: Truncating threadId to 32-bit
+            if (!etcb((UINT32)latestLog->threadId, token))
                 break;
         }
     }
 }
+
+typedef DPTR(SIZE_T) PTR_SIZE_T;
 
 // Can't refer to the types in sospriv.h because it drags in windows.h
 void StressLog::EnumStressLogMemRanges(/*STRESSLOGMEMRANGECALLBACK*/void* slmrcbWrapper, void *token)
@@ -571,7 +573,7 @@ void StressLog::EnumStressLogMemRanges(/*STRESSLOGMEMRANGECALLBACK*/void* slmrcb
     //
 
     size_t ThreadStressLogAddr = *dac_cast<PTR_SIZE_T>(PTR_HOST_MEMBER_TADDR(StressLog, this, logs));
-    while(ThreadStressLogAddr != NULL) 
+    while (ThreadStressLogAddr != NULL) 
     {
         size_t ChunkListHeadAddr = *dac_cast<PTR_SIZE_T>(ThreadStressLogAddr + offsetof(ThreadStressLog, chunkListHead));
         size_t StressLogChunkAddr = ChunkListHeadAddr;

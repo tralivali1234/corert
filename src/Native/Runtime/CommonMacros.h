@@ -1,12 +1,12 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
-// Some of our header files are shared with the binder, which needs the TARGET_* macros defined
-#if defined(TARGET_X64)
-#elif defined(TARGET_X86)
-#elif defined(TARGET_ARM)
+// Some of our header files are shared with the binder, which needs the _TARGET_* macros defined
+#if defined(_TARGET_AMD64_)
+#elif defined(_TARGET_X86_)
+#elif defined(_TARGET_ARM_)
+#elif defined(_TARGET_ARM64_)
 #else
 #error Unsupported architecture
 #endif
@@ -41,7 +41,17 @@ char (*COUNTOF_helper(_CountofType (&_Array)[_SizeOfArray]))[_SizeOfArray];
 #define offsetof(s,m)   (UIntNative)( (IntNative)&reinterpret_cast<const volatile char&>((((s *)0)->m)) )
 #endif // offsetof
 
+#ifndef FORCEINLINE
 #define FORCEINLINE __forceinline
+#endif
+
+#ifndef NOINLINE
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((noinline))
+#endif
+#endif
 
 inline UIntNative ALIGN_UP(UIntNative val, UIntNative alignment);
 template <typename T>
@@ -96,11 +106,33 @@ EXTERN_C int __cdecl memcmp(const void *,const void *,size_t);
 
 #if defined(_AMD64_)
 
-#define DATA_ALIGNMENT  8
-#define OS_PAGE_SIZE    0x1000
-#define VIRTUAL_ALLOC_RESERVE_GRANULARITY (64*1024)    // 0x10000  (64 KB)
 #define LOG2_PTRSIZE 3
 #define POINTER_SIZE 8
+
+#elif defined(_X86_)
+
+#define LOG2_PTRSIZE 2
+#define POINTER_SIZE 4
+
+#elif defined(_ARM_)
+
+#define LOG2_PTRSIZE 2
+#define POINTER_SIZE 4
+
+#elif defined(_ARM64_)
+
+#define LOG2_PTRSIZE 3
+#define POINTER_SIZE 8
+
+#else
+#error Unsupported target architecture
+#endif
+
+#ifndef GCENV_INCLUDED
+#if defined(_AMD64_)
+
+#define DATA_ALIGNMENT  8
+#define OS_PAGE_SIZE    0x1000
 
 #elif defined(_X86_)
 
@@ -108,9 +140,6 @@ EXTERN_C int __cdecl memcmp(const void *,const void *,size_t);
 #ifndef OS_PAGE_SIZE
 #define OS_PAGE_SIZE    0x1000
 #endif
-#define VIRTUAL_ALLOC_RESERVE_GRANULARITY (64*1024)    // 0x10000  (64 KB)
-#define LOG2_PTRSIZE 2
-#define POINTER_SIZE 4
 
 #elif defined(_ARM_)
 
@@ -118,13 +147,18 @@ EXTERN_C int __cdecl memcmp(const void *,const void *,size_t);
 #ifndef OS_PAGE_SIZE
 #define OS_PAGE_SIZE    0x1000
 #endif
-#define VIRTUAL_ALLOC_RESERVE_GRANULARITY (64*1024)    // 0x10000  (64 KB)
-#define LOG2_PTRSIZE 2
-#define POINTER_SIZE 4
+
+#elif defined(_ARM64_)
+
+#define DATA_ALIGNMENT  8
+#ifndef OS_PAGE_SIZE
+#define OS_PAGE_SIZE    0x1000
+#endif
 
 #else
 #error Unsupported target architecture
 #endif
+#endif // GCENV_INCLUDED
 
 //
 // Define an unmanaged function called from managed code that needs to execute in co-operative GC mode. (There
@@ -170,4 +204,28 @@ bool inline FitsInI4(__int64 val)
     return val == (__int64)(__int32)val;
 }
 
-#define C_ASSERT(e) typedef char __C_ASSERT__[(e)?1:-1]
+#ifndef C_ASSERT
+#define C_ASSERT(e) static_assert(e, #e)
+#endif // C_ASSERT
+
+#ifdef __llvm__
+#define DECLSPEC_THREAD __thread
+#else // __llvm__
+#define DECLSPEC_THREAD __declspec(thread)
+#endif // !__llvm__
+
+#ifndef GCENV_INCLUDED
+#if !defined(_INC_WINDOWS) && !defined(BINDER)
+#ifdef _WIN32
+// this must exactly match the typedef used by windows.h
+typedef long HRESULT;
+#else
+typedef int32_t HRESULT;
+#endif
+
+#define S_OK  0x0
+#define E_FAIL 0x80004005
+
+#define UNREFERENCED_PARAMETER(P)          (void)(P)
+#endif // !defined(_INC_WINDOWS) && !defined(BINDER)
+#endif // GCENV_INCLUDED

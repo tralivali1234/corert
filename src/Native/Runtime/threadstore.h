@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 class Thread;
 class CLREventStatic;
 class RuntimeInstance;
@@ -17,7 +16,7 @@ class ThreadStore
 
 private:
     ThreadStore();
-    static void *           CreateCurrentThreadBuffer();
+
     void                    LockThreadStore();
     void                    UnlockThreadStore();
 
@@ -40,10 +39,12 @@ public:
     static PTR_Thread       GetSuspendingThread();
     static void             AttachCurrentThread();
     static void             AttachCurrentThread(bool fAcquireThreadStoreLock);
-    static void             DetachCurrentThreadIfHomeFiber();
-#ifdef DACCESS_COMPILE
+    static void             DetachCurrentThread();
+#ifndef DACCESS_COMPILE
+    static void             SaveCurrentThreadOffsetForDAC();
+#else
     static PTR_Thread       GetThreadFromTEB(TADDR pvTEB);
-#endif // DACCESS_COMPILE
+#endif
     Boolean                 GetExceptionsForCurrentThread(Array* pOutputArray, Int32* pWrittenCountOut);
 
     void        Destroy();

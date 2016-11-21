@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Low-level types describing GC object layouts.
@@ -18,9 +17,9 @@
 class ObjHeader
 {
 private:
-#if defined(_WIN64)
+#if defined(BIT64)
     UInt32   m_uAlignpad;
-#endif // _WIN64
+#endif // BIT64
     UInt32   m_uSyncBlockValue;
 
 public:
@@ -33,6 +32,10 @@ public:
 
 //-------------------------------------------------------------------------------------------------
 static UIntNative const SYNC_BLOCK_SKEW  = sizeof(void *);
+
+class EEType;
+typedef DPTR(class EEType) PTR_EEType;
+class MethodTable;
 
 //-------------------------------------------------------------------------------------------------
 class Object
@@ -53,6 +56,24 @@ public:
 
     size_t GetSize();
 #endif
+
+    //
+    // Adapter methods for GC code so that GC and runtime code can use the same type.  
+    // These methods are deprecated -- only use from existing GC code.
+    //
+    MethodTable * RawGetMethodTable() const
+    {
+        return (MethodTable*)get_EEType();
+    }
+    MethodTable * GetGCSafeMethodTable() const
+    {
+        return (MethodTable *)get_SafeEEType();
+    }
+    void RawSetMethodTable(MethodTable * pMT)
+    {
+        m_pEEType = PTR_EEType((EEType *)pMT);
+    }
+    ////// End adaptor methods 
 };
 typedef DPTR(Object) PTR_Object;
 typedef DPTR(PTR_Object) PTR_PTR_Object;
@@ -66,16 +87,16 @@ static UIntNative const REFERENCE_SIZE   = sizeof(Object *);
 //-------------------------------------------------------------------------------------------------
 class Array : public Object
 {
+    friend class ArrayBase;
     friend class AsmOffsets;
 
     UInt32       m_Length;
-#if defined(_WIN64)
+#if defined(BIT64)
     UInt32       m_uAlignpad;
-#endif // _WIN64
+#endif // BIT64
 public:  
     UInt32 GetArrayLength();
     void InitArrayLength(UInt32 length);
     void* GetArrayData();
 };
 typedef DPTR(Array) PTR_Array;
-

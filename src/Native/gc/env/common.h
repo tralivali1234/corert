@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 // common.h : include file for standard system include files,
 // or project specific include files that are used frequently, but
@@ -10,11 +9,14 @@
 
 #pragma once
 
-#define _CRT_SECURE_NO_WARNINGS
+#ifndef _CRT_SECURE_NO_WARNINGS
+ #define _CRT_SECURE_NO_WARNINGS
+#endif // _CRT_SECURE_NO_WARNINGS
 
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <wchar.h>
 #include <assert.h>
 #include <stdarg.h>
@@ -22,7 +24,7 @@
 
 #include <new>
 
-#ifndef WIN32
+#ifdef PLATFORM_UNIX
 #include <pthread.h>
 #endif
 

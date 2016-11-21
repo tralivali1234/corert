@@ -1,15 +1,21 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Unmanaged helpers called by the managed finalizer thread.
 //
+#include "common.h"
+#include "gcenv.h"
+#include "gcheaputilities.h"
 
-#include "gcrhenv.h"
+#include "slist.h"
+#include "gcrhinterface.h"
+#include "RWLock.h"
 #include "RuntimeInstance.h"
+#include "shash.h"
 #include "module.h"
+
 
 // Block the current thread until at least one object needs to be finalized (returns true) or memory is low
 // (returns false and the finalizer thread should initiate a garbage collection).
@@ -24,17 +30,24 @@ EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhpWaitForFinalizerRequest()
     // request.
     static bool fLastEventWasLowMemory = false;
 
-    GCHeap * pHeap = GCHeap::GetGCHeap();
+    IGCHeap * pHeap = GCHeapUtilities::GetGCHeap();
 
     // Wait in a loop because we may have to retry if we decide to only wait for finalization events but the
     // two second timeout expires.
     do
     {
-        HANDLE  rgWaitHandles[] = { pHeap->GetFinalizerEvent(), pHeap->GetLowMemoryNotificationEvent() };
-        UInt32  cWaitHandles = (fLastEventWasLowMemory || pHeap->GetLowMemoryNotificationEvent() == NULL) ? 1 : 2;
+        HANDLE  lowMemEvent = NULL;
+#if 0 // TODO: hook up low memory notification
+        lowMemEvent = pHeap->GetLowMemoryNotificationEvent();
+        HANDLE  rgWaitHandles[] = { FinalizerThread::GetFinalizerEvent(), lowMemEvent };
+        UInt32  cWaitHandles = (fLastEventWasLowMemory || (lowMemEvent == NULL)) ? 1 : 2;
         UInt32  uTimeout = fLastEventWasLowMemory ? 2000 : INFINITE;
 
         UInt32 uResult = PalWaitForMultipleObjectsEx(cWaitHandles, rgWaitHandles, FALSE, uTimeout, FALSE);
+#else
+        UInt32 uResult = PalWaitForSingleObjectEx(FinalizerThread::GetFinalizerEvent(), INFINITE, FALSE);
+#endif
+
         switch (uResult)
         {
         case WAIT_OBJECT_0:
@@ -64,21 +77,7 @@ EXTERN_C REDHAWK_API UInt32_BOOL __cdecl RhpWaitForFinalizerRequest()
 // Indicate that the current round of finalizations is complete.
 EXTERN_C REDHAWK_API void __cdecl RhpSignalFinalizationComplete()
 {
-    GCHeap::GetGCHeap()->SignalFinalizationDone(TRUE);
-}
-
-// Enable a last pass of the finalizer during (clean) runtime shutdown. Specify the number of milliseconds
-// we'll wait before giving up a proceeding with the shutdown (INFINITE is an allowable value).
-COOP_PINVOKE_HELPER(void, RhEnableShutdownFinalization, (UInt32 uiTimeout))
-{
-    g_fPerformShutdownFinalization = true;
-    g_uiShutdownFinalizationTimeout = uiTimeout;
-}
-
-// Returns true when shutdown has started and it is no longer safe to access other objects from finalizers.
-COOP_PINVOKE_HELPER(UInt8, RhHasShutdownStarted, ())
-{
-    return g_fShutdownHasStarted ? 1 : 0;
+    FinalizerThread::SignalFinalizationDone(TRUE);
 }
 
 //
@@ -92,7 +91,7 @@ COOP_PINVOKE_HELPER(OBJECTREF, RhpGetNextFinalizableObject, ())
     while (true)
     {
         // Get the next finalizable object. If we get back NULL we've reached the end of the list.
-        OBJECTREF refNext = GCHeap::GetGCHeap()->GetNextFinalizable();
+        OBJECTREF refNext = GCHeapUtilities::GetGCHeap()->GetNextFinalizable();
         if (refNext == NULL)
             return NULL;
 

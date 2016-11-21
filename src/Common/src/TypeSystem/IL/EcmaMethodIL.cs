@@ -1,8 +1,8 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
-using System.Runtime.InteropServices;
 using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
@@ -12,93 +12,113 @@ using Internal.TypeSystem.Ecma;
 
 namespace Internal.IL
 {
-    public class EcmaMethodIL : MethodIL
+    public partial class EcmaMethodIL : MethodIL
     {
-        EcmaModule _module;
-        MethodBodyBlock _methodBody;
+        private EcmaModule _module;
+        private EcmaMethod _method;
+        private MethodBodyBlock _methodBody;
+
+        // Cached values
+        private byte[] _ilBytes;
+        private LocalVariableDefinition[] _locals;
+        private ILExceptionRegion[] _ilExceptionRegions;
 
         static public EcmaMethodIL Create(EcmaMethod method)
         {
             var rva = method.MetadataReader.GetMethodDefinition(method.Handle).RelativeVirtualAddress;
             if (rva == 0)
                 return null;
-            return new EcmaMethodIL(method.Module, method.Module.PEReader.GetMethodBody(rva));
+            return new EcmaMethodIL(method, rva);
         }
 
-        public EcmaMethodIL(EcmaModule module, MethodBodyBlock methodBody)
+        private EcmaMethodIL(EcmaMethod method, int rva)
         {
-            _module = module;
-            _methodBody = methodBody;
+            _method = method;
+            _module = method.Module;
+            _methodBody = _module.PEReader.GetMethodBody(rva);
         }
 
-        // Avoid unnecessary copy
-        static byte[] DangerousGetUnderlyingArray(ImmutableArray<byte> array)
+        public override MethodDesc OwningMethod
         {
-            var union = new ByteArrayUnion();
-            union.ImmutableArray = array;
-            return union.UnderlyingArray;
-        }
-
-        [StructLayout(LayoutKind.Explicit)]
-        struct ByteArrayUnion
-        {
-            [FieldOffset(0)]
-            internal byte[] UnderlyingArray;
-
-            [FieldOffset(0)]
-            internal ImmutableArray<byte> ImmutableArray;
+            get
+            {
+                return _method;
+            }
         }
 
         public override byte[] GetILBytes()
         {
-            return DangerousGetUnderlyingArray(_methodBody.GetILContent());
+            if (_ilBytes != null)
+                return _ilBytes;
+
+            byte[] ilBytes = _methodBody.GetILBytes();
+            return (_ilBytes = ilBytes);
         }
 
-        public override bool GetInitLocals()
+        public override bool IsInitLocals
         {
-            return _methodBody.LocalVariablesInitialized;
+            get
+            {
+                return _methodBody.LocalVariablesInitialized;
+            }
         }
 
-        public override int GetMaxStack()
+        public override int MaxStack
         {
-            return _methodBody.MaxStack;
+            get
+            {
+                return _methodBody.MaxStack;
+            }
         }
 
-        public override TypeDesc[] GetLocals()
+        public override LocalVariableDefinition[] GetLocals()
         {
+            if (_locals != null)
+                return _locals;
+
             var metadataReader = _module.MetadataReader;
             var localSignature = _methodBody.LocalSignature;
             if (localSignature.IsNil)
-                return TypeDesc.EmptyTypes;
+                return Array.Empty<LocalVariableDefinition>();
             BlobReader signatureReader = metadataReader.GetBlobReader(metadataReader.GetStandaloneSignature(localSignature).Signature);
 
             EcmaSignatureParser parser = new EcmaSignatureParser(_module, signatureReader);
-            return parser.ParseLocalsSignature();
+            LocalVariableDefinition[] locals = parser.ParseLocalsSignature();
+            return (_locals = locals);
         }
 
         public override ILExceptionRegion[] GetExceptionRegions()
         {
+            if (_ilExceptionRegions != null)
+                return _ilExceptionRegions;
+
             ImmutableArray<ExceptionRegion> exceptionRegions = _methodBody.ExceptionRegions;
+            ILExceptionRegion[] ilExceptionRegions;
 
             int length = exceptionRegions.Length;
-            if (exceptionRegions.Length == 0)
-                return new ILExceptionRegion[0]; // TODO: Array.Empty<ILExceptionRegion>()
-
-            ILExceptionRegion[] ilExceptionRegions = new ILExceptionRegion[length];
-            for (int i = 0; i < length; i++)
+            if (length == 0)
             {
-                var exceptionRegion = exceptionRegions[i];
-
-                ilExceptionRegions[i] = new ILExceptionRegion(
-                    (ILExceptionRegionKind)exceptionRegion.Kind, // assumes that ILExceptionRegionKind and ExceptionRegionKind enums are in sync
-                    exceptionRegion.TryOffset,
-                    exceptionRegion.TryLength,
-                    exceptionRegion.HandlerOffset,
-                    exceptionRegion.HandlerLength,
-                    MetadataTokens.GetToken(exceptionRegion.CatchType),
-                    exceptionRegion.FilterOffset);
+                ilExceptionRegions = Array.Empty<ILExceptionRegion>();
             }
-            return ilExceptionRegions;
+            else
+            {
+                ilExceptionRegions = new ILExceptionRegion[length];
+                for (int i = 0; i < length; i++)
+                {
+                    var exceptionRegion = exceptionRegions[i];
+
+                    ilExceptionRegions[i] = new ILExceptionRegion(
+                        (ILExceptionRegionKind)exceptionRegion.Kind, // assumes that ILExceptionRegionKind and ExceptionRegionKind enums are in sync
+                        exceptionRegion.TryOffset,
+                        exceptionRegion.TryLength,
+                        exceptionRegion.HandlerOffset,
+                        exceptionRegion.HandlerLength,
+                        MetadataTokens.GetToken(exceptionRegion.CatchType),
+                        exceptionRegion.FilterOffset);
+                }
+            }
+
+            return (_ilExceptionRegions = ilExceptionRegions);
         }
 
         public override object GetObject(int token)

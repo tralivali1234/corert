@@ -1,24 +1,25 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-#include "commontypes.h"
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
 #include "event.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "holder.h"
-#include "crst.h"
-#include "rwlock.h"
+#include "Crst.h"
+#include "RWLock.h"
 #include "threadstore.h"
+#include "threadstore.inl"
 
 //
 // -----------------------------------------------------------------------------------------------------------
@@ -27,28 +28,32 @@
 // interception). 
 //
 
-void CLREventStatic::CreateManualEvent(bool bInitialState) 
+bool CLREventStatic::CreateManualEventNoThrow(bool bInitialState) 
 { 
     m_hEvent = PalCreateEventW(NULL, TRUE, bInitialState, NULL); 
     m_fInitialized = true;
+    return IsValid();
 }
 
-void CLREventStatic::CreateAutoEvent(bool bInitialState) 
+bool CLREventStatic::CreateAutoEventNoThrow(bool bInitialState)
 { 
     m_hEvent = PalCreateEventW(NULL, FALSE, bInitialState, NULL); 
     m_fInitialized = true;
+    return IsValid();
 }
 
-void CLREventStatic::CreateOSManualEvent(bool bInitialState) 
+bool CLREventStatic::CreateOSManualEventNoThrow(bool bInitialState)
 { 
     m_hEvent = PalCreateEventW(NULL, TRUE, bInitialState, NULL); 
     m_fInitialized = true;
+    return IsValid();
 }
 
-void CLREventStatic::CreateOSAutoEvent (bool bInitialState) 
+bool CLREventStatic::CreateOSAutoEventNoThrow(bool bInitialState)
 { 
     m_hEvent = PalCreateEventW(NULL, FALSE, bInitialState, NULL); 
     m_fInitialized = true;
+    return IsValid();
 }
 
 void CLREventStatic::CloseEvent() 
@@ -79,7 +84,7 @@ bool CLREventStatic::Reset()
     return PalResetEvent(m_hEvent); 
 }
 
-UInt32 CLREventStatic::Wait(UInt32 dwMilliseconds, bool bAlertable, bool bAllowReentrantWait)
+uint32_t CLREventStatic::Wait(uint32_t dwMilliseconds, bool bAlertable, bool bAllowReentrantWait)
 {
     UInt32 result = WAIT_FAILED;
 
@@ -90,9 +95,9 @@ UInt32 CLREventStatic::Wait(UInt32 dwMilliseconds, bool bAlertable, bool bAllowR
 
         if (NULL != pCurThread)
         {
-            if (pCurThread->PreemptiveGCDisabled())
+            if (pCurThread->IsCurrentThreadInCooperativeMode())
             {
-                pCurThread->EnablePreemptiveGC();
+                pCurThread->EnablePreemptiveMode();
                 disablePreemptive = true;
             }
         }
@@ -101,7 +106,7 @@ UInt32 CLREventStatic::Wait(UInt32 dwMilliseconds, bool bAlertable, bool bAllowR
 
         if (disablePreemptive)
         {
-            pCurThread->DisablePreemptiveGC();
+            pCurThread->DisablePreemptiveMode();
         }
     }
 

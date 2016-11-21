@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 #define FireEtwGCStart(Count, Reason) 0
 #define FireEtwGCStart_V1(Count, Depth, Reason, Type, ClrInstanceID) 0
@@ -169,6 +168,7 @@
 #define FireEtwDebugIPCEventEnd() 0
 #define FireEtwDebugExceptionProcessingStart() 0
 #define FireEtwDebugExceptionProcessingEnd() 0
+#define FireEtwCodeSymbols(ModuleId, TotalChunks, ChunkNumber, ChunkLength, Chunk, ClrInstanceID) 0
 #define FireEtwCLRStackWalkDCStart(ClrInstanceID, Reserved1, Reserved2, FrameCount, Stack) 0
 #define FireEtwMethodDCStart(MethodID, ModuleID, MethodStartAddress, MethodSize, MethodToken, MethodFlags) 0
 #define FireEtwMethodDCStart_V1(MethodID, ModuleID, MethodStartAddress, MethodSize, MethodToken, MethodFlags, ClrInstanceID) 0

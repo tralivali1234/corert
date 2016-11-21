@@ -1,34 +1,27 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 #include "common.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-#if !defined(DACCESS_COMPILE)
-#include "commontypes.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
-#include "static_check.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "type_traits.hpp"
 #include "slist.h"
 #include "holder.h"
-#include "crst.h"
-#include "instancestore.h"
-#include "rwlock.h"
-#include "runtimeinstance.h"
+#include "Crst.h"
+#include "RWLock.h"
+#include "RuntimeInstance.h"
 #include "gcrhinterface.h"
+#include "shash.h"
 #include "module.h"
 #include "DebugEventSource.h"
 
 #include "slist.inl"
 
 #include "DebugEvents.h"
-#endif //!DACCESS_COMPILE
 
 GVAL_IMPL_INIT(UInt32, g_DebuggerEventsFilter, 0);
 
@@ -120,6 +113,7 @@ void DebugEventSource::SendExceptionFirstPassFrameEnteredEvent(CORDB_ADDRESS ipI
 //---------------------------------------------------------------------------------------
 void DebugEventSource::SendRawEvent(DebugEventPayload* pPayload)
 {
+#ifdef _MSC_VER
     // We get to send an array of void* as data with the notification.
     // The debugger can then use ReadProcessMemory to read through this array.
     UInt64 rgData [] = {
@@ -151,6 +145,7 @@ void DebugEventSource::SendRawEvent(DebugEventPayload* pPayload)
         //
         // there is no great harm in reaching here but it is a needless perf-cost
     }
+#endif // _MSC_VER
 }
 
 //keep these synced with the enumeration in exceptionhandling.cs

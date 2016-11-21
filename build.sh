@@ -2,15 +2,17 @@
 
 usage()
 {
-    echo "Usage: $0 [managed] [native] [BuildArch] [BuildType] [clean] [verbose] [clangx.y]"
+    echo "Usage: $0 [managed] [native] [BuildArch] [BuildType] [clean] [cross] [verbose] [clangx.y]"
     echo "managed - optional argument to build the managed code"
     echo "native - optional argument to build the native code"
     echo "The following arguments affect native builds only:"
-    echo "BuildArch can be: x64, arm"
+    echo "BuildArch can be: x64, x86, arm, arm64"
     echo "BuildType can be: Debug, Release"
     echo "clean - optional argument to force a clean build."
     echo "verbose - optional argument to enable verbose build output."
     echo "clangx.y - optional argument to build using clang version x.y."
+    echo "cross - optional argument to signify cross compilation,"
+    echo "      - will use ROOTFS_DIR environment variable if set."
 
     exit 1
 }
@@ -19,7 +21,7 @@ setup_dirs()
 {
     echo Setting up directories for build
 
-    mkdir -p "$__BinDir"
+    mkdir -p "$__ProductBinDir"
     mkdir -p "$__IntermediatesDir"
 }
 
@@ -28,27 +30,11 @@ setup_dirs()
 clean()
 {
     echo "Cleaning previous output for the selected configuration"
-    rm -rf "$__BinDir"
+    rm -rf "$__ProductBinDir"
     rm -rf "$__IntermediatesDir"
 }
 
 # Check the system to ensure the right pre-reqs are in place
-
-check_managed_prereqs()
-{
-    __monoversion=$(mono --version | grep "version 4.[1-9]")
-
-    if [ $? -ne 0 ]; then
-        # if built from tarball, mono only identifies itself as 4.0.1
-        __monoversion=$(mono --version | egrep "version 4.0.[1-9]+(.[0-9]+)?")
-        if [ $? -ne 0 ]; then
-            echo "Mono 4.0.1.44 or later is required to build corert."
-            exit 1
-        else
-            echo "WARNING: Mono 4.0.1.44 or later is required to build corert. Unable to assess if current version is supported."
-        fi
-    fi
-}
 
 check_native_prereqs()
 {
@@ -65,51 +51,22 @@ check_native_prereqs()
 
 prepare_managed_build()
 {
-    # Pull NuGet.exe down if we don't have it already
-    if [ ! -e "$__nugetpath" ]; then
-        which curl wget > /dev/null 2> /dev/null
-        if [ $? -ne 0 -a $? -ne 1 ]; then
-            echo "cURL or wget is required to build corert."
-            exit 1
-        fi
-        echo "Restoring NuGet.exe..."
+    # Run Init-Tools to restore BuildTools and ToolRuntime
+    $__scriptpath/init-tools.sh
 
-        # curl has HTTPS CA trust-issues less often than wget, so lets try that first.
-        which curl > /dev/null 2> /dev/null
-        if [ $? -ne 0 ]; then
-           mkdir -p $__packageroot
-           wget -q -O $__nugetpath https://api.nuget.org/downloads/nuget.exe
-        else
-           curl -sSL --create-dirs -o $__nugetpath https://api.nuget.org/downloads/nuget.exe
-        fi
+    # Tell nuget to always use repo-local nuget package cache. The "dotnet restore" invocations use the --packages
+    # argument, but there are a few commands in publish and tests that do not.
+    export NUGET_PACKAGES=$__packageroot
 
-        if [ $? -ne 0 ]; then
-            echo "Failed to restore NuGet.exe."
-            exit 1
-        fi
-    fi
-
-    # Grab the MSBuild package if we don't have it already
-    if [ ! -e "$__msbuildpath" ]; then
-        echo "Restoring MSBuild..."
-        mono "$__nugetpath" install $__msbuildpackageid -Version $__msbuildpackageversion -source "https://www.myget.org/F/dotnet-buildtools/" -OutputDirectory "$__packageroot"
-        if [ $? -ne 0 ]; then
-            echo "Failed to restore MSBuild."
-            exit 1
-        fi
-    fi
+    echo "Using CLI tools version:"
+    ls "$__dotnetclipath/sdk"
 }
 
 prepare_native_build()
 {
     # Specify path to be set for CMAKE_INSTALL_PREFIX.
     # This is where all built CoreClr libraries will copied to.
-    export __CMakeBinDir="$__BinDir"
-
-    # Configure environment if we are doing a clean build.
-    if [ $__CleanBuild == 1 ]; then
-        clean
-    fi
+    export __CMakeBinDir="$__ProductBinDir"
 
     # Configure environment if we are doing a verbose build
     if [ $__VerboseBuild == 1 ]; then
@@ -120,9 +77,13 @@ prepare_native_build()
 build_managed_corert()
 {
     __buildproj=$__scriptpath/build.proj
-    __buildlog=$__scriptpath/msbuild.log
+    __buildlog=$__scriptpath/msbuild.$__BuildArch.log
 
-    MONO29679=1 ReferenceAssemblyRoot=$__referenceassemblyroot mono $__msbuildpath "$__buildproj" /nologo /verbosity:minimal "/fileloggerparameters:Verbosity=normal;LogFile=$__buildlog" /t:Build /p:OSGroup=$__BuildOS /p:UseRoslynCompiler=true /p:COMPUTERNAME=$(hostname) /p:USERNAME=$(id -un) "$@"
+    if [ -z "${ToolchainMilestone}" ]; then
+        ToolchainMilestone=testing
+    fi
+
+    $__scriptpath/Tools/msbuild.sh "$__buildproj" /m /nologo /verbosity:minimal "/fileloggerparameters:Verbosity=normal;LogFile=$__buildlog" /t:Build /p:RepoPath=$__ProjectRoot /p:RepoLocalBuild="true" /p:RelativeProductBinDir=$__RelativeProductBinDir /p:CleanedTheBuild=$__CleanBuild /p:NuPkgRid=$__NugetRuntimeId /p:TestNugetRuntimeId=$__NugetRuntimeId /p:OSGroup=$__BuildOS /p:Configuration=$__BuildType /p:Platform=$__BuildArch /p:COMPUTERNAME=$(hostname) /p:USERNAME=$(id -un) /p:ToolchainMilestone=${ToolchainMilestone} $__UnprocessedBuildArgs
     BUILDERRORLEVEL=$?
 
     echo
@@ -140,8 +101,8 @@ build_native_corert()
     cd "$__IntermediatesDir"
 
     # Regenerate the CMake solution
-    echo "Invoking cmake with arguments: \"$__nativeroot\" $__CMakeArgs"
-    "$__nativeroot/gen-buildsys-clang.sh" "$__nativeroot" $__ClangMajorVersion $__ClangMinorVersion $__CMakeArgs
+    echo "Invoking cmake with arguments: \"$__ProjectRoot\" $__BuildType"
+    "$__ProjectRoot/src/Native/gen-buildsys-clang.sh" "$__ProjectRoot" $__ClangMajorVersion $__ClangMinorVersion $__BuildArch $__BuildType
 
     # Check that the makefiles were created.
 
@@ -155,6 +116,8 @@ build_native_corert()
     # processors available to a single process.
     if [ `uname` = "FreeBSD" ]; then
         NumProc=`sysctl hw.ncpu | awk '{ print $2+1 }'`
+    elif [ `uname` = "NetBSD" ]; then
+        NumProc=$(($(getconf NPROCESSORS_ONLN)+1))
     else
         NumProc=$(($(getconf _NPROCESSORS_ONLN)+1))
     fi
@@ -170,72 +133,114 @@ build_native_corert()
     fi
 
     echo "CoreRT native components successfully built."
-    echo "Product binaries are available at $__BinDir"
+}
+
+get_current_linux_distro() {
+    # Detect Distro
+    if [ "$(cat /etc/*-release | grep -cim1 ubuntu)" -eq 1 ]; then
+        if [ "$(cat /etc/*-release | grep -cim1 16.04)" -eq 1 ]; then
+            echo "ubuntu.16.04"
+            return 0
+        fi
+
+        echo "ubuntu.14.04"
+        return 0
+    fi
+
+    # Cannot determine Linux distribution, assuming Ubuntu 14.04.
+    echo "ubuntu.14.04"
+    return 0
 }
 
 __scriptpath=$(cd "$(dirname "$0")"; pwd -P)
-__nativeroot=$__scriptpath/src/Native
+__ProjectRoot=$__scriptpath
 __packageroot=$__scriptpath/packages
 __sourceroot=$__scriptpath/src
-__nugetpath=$__packageroot/NuGet.exe
-__nugetconfig=$__sourceroot/NuGet.Config
 __rootbinpath="$__scriptpath/bin"
-__msbuildpackageid="Microsoft.Build.Mono.Debug"
-__msbuildpackageversion="14.1.0.0-prerelease"
-__msbuildpath=$__packageroot/$__msbuildpackageid.$__msbuildpackageversion/lib/MSBuild.exe
-__BuildArch=x64
 __buildmanaged=false
 __buildnative=false
+__dotnetclipath=$__scriptpath/Tools/dotnetcli
+
+# Use uname to determine what the CPU is.
+CPUName=$(uname -p)
+# Some Linux platforms report unknown for platform, but the arch for machine.
+if [ $CPUName == "unknown" ]; then
+    CPUName=$(uname -m)
+fi
+
+case $CPUName in
+    i686)
+        __BuildArch=x86
+        ;;
+
+    x86_64)
+        __BuildArch=x64
+        ;;
+
+    armv7l)
+        echo "Unsupported CPU $CPUName detected, build might not succeed!"
+        __BuildArch=arm
+        ;;
+
+    aarch64)
+        echo "Unsupported CPU $CPUName detected, build might not succeed!"
+        __BuildArch=arm64
+        ;;
+
+    *)
+        echo "Unknown CPU $CPUName detected, configuring as if for x64"
+        __BuildArch=x64
+        ;;
+esac
+
 # Use uname to determine what the OS is.
 OSName=$(uname -s)
 case $OSName in
-    Linux)
-        __BuildOS=Linux
-        ;;
-
     Darwin)
         __BuildOS=OSX
+        __NugetRuntimeId=osx.10.10-x64
+        ulimit -n 2048
         ;;
 
     FreeBSD)
         __BuildOS=FreeBSD
+        # TODO: Add proper FreeBSD target
+        __NugetRuntimeId=ubuntu.14.04-x64
+        ;;
+
+    Linux)
+        __BuildOS=Linux
+        __NugetRuntimeId=$(get_current_linux_distro)-x64
+        ;;
+
+    NetBSD)
+        __BuildOS=NetBSD
+        # TODO: Add proper NetBSD target
+        __NugetRuntimeId=ubuntu.14.04-x64
         ;;
 
     *)
         echo "Unsupported OS $OSName detected, configuring as if for Linux"
         __BuildOS=Linux
+        __NugetRuntimeId=ubuntu.14.04-x64
         ;;
 esac
 __BuildType=Debug
-__CMakeArgs=DEBUG
 
-case $__BuildOS in
-    FreeBSD)
-        __monoroot=/usr/local
-        ;;
-    OSX)
-        __monoroot=/Library/Frameworks/Mono.framework/Versions/Current
-        ;;
-    *)
-        __monoroot=/usr
-        ;;
-esac
-
-__referenceassemblyroot=$__monoroot/lib/mono/xbuild-frameworks
 BUILDERRORLEVEL=0
 
 # Set the various build properties here so that CMake and MSBuild can pick them up
 __UnprocessedBuildArgs=
-__CleanBuild=false
-__VerboseBuild=false
+__CleanBuild=0
+__VerboseBuild=0
 __ClangMajorVersion=3
 __ClangMinorVersion=5
+__CrossBuild=0
 
-for i in "$@"
-    do
-        lowerI="$(echo $i | awk '{print tolower($0)}')"
+while [ "$1" != "" ]; do
+        lowerI="$(echo $1 | awk '{print tolower($0)}')"
         case $lowerI in
-        -?|-h|--help)
+        -h|--help)
             usage
             exit 1
             ;;
@@ -245,20 +250,23 @@ for i in "$@"
         native)
             __buildnative=true
             ;;
+        x86)
+            __BuildArch=x86
+            ;;
         x64)
             __BuildArch=x64
-            __MSBuildBuildArch=x64
             ;;
         arm)
             __BuildArch=arm
-            __MSBuildBuildArch=arm
+            ;;
+        arm64)
+            __BuildArch=arm64
             ;;
         debug)
             __BuildType=Debug
             ;;
         release)
             __BuildType=Release
-            __CMakeArgs=RELEASE
             ;;
         clean)
             __CleanBuild=1
@@ -278,47 +286,55 @@ for i in "$@"
             __ClangMajorVersion=3
             __ClangMinorVersion=7
             ;;
+        cross)
+            __CrossBuild=1
+            ;;
+        -dotnetclipath) 
+            shift
+            __dotnetclipath=$1
+        ;;
         *)
-          __UnprocessedBuildArgs="$__UnprocessedBuildArgs $i"
+          __UnprocessedBuildArgs="$__UnprocessedBuildArgs $1"
     esac
+    shift
 done
 
-# If neither managed nor native are passed as arguments, default to building native only
+# If neither managed nor native are passed as arguments, default to building both
 
 if [ "$__buildmanaged" = false -a "$__buildnative" = false ]; then
-    __buildmanaged=false
+    __buildmanaged=true
     __buildnative=true
 fi
 
 # Set the remaining variables based upon the determined build configuration
-__IntermediatesDir="$__rootbinpath/obj/$__BuildOS.$__BuildArch.$__BuildType/Native"
-__BinDir="$__rootbinpath/$__BuildOS.$__BuildArch.$__BuildType/Native"
+__IntermediatesDir="$__rootbinpath/obj/Native/$__BuildOS.$__BuildArch.$__BuildType"
+__ProductBinDir="$__rootbinpath/Product/$__BuildOS.$__BuildArch.$__BuildType"
+__RelativeProductBinDir="bin/Product/$__BuildOS.$__BuildArch.$__BuildType"
 
-# Make the directories necessary for build if they don't exist
+# CI_SPECIFIC - On CI machines, $HOME may not be set. In such a case, create a subfolder and set the variable to set.
+# This is needed by CLI to function.
+if [ -z "$HOME" ]; then
+    if [ ! -d "$__ProjectRoot/temp_home" ]; then
+        mkdir "$__ProjectRoot/temp_home"
+    fi
+    export HOME=$__ProjectRoot/temp_home
+    echo "HOME not defined; setting it to $HOME"
+fi
+
+# Configure environment if we are doing a clean build.
+if [ $__CleanBuild == 1 ]; then
+    clean
+fi
+
+# Configure environment if we are doing a cross compile.
+if [ $__CrossBuild == 1 ]; then
+    export CROSSCOMPILE=1
+    if ! [[ -n "$ROOTFS_DIR" ]]; then
+        export ROOTFS_DIR="$__ProjectRoot/cross/rootfs/$__BuildArch"
+    fi
+fi
 
 setup_dirs
-
-if $__buildmanaged; then
-
-    # Check prereqs.
-
-    check_managed_prereqs
-
-    # Prepare the system
-
-    prepare_managed_build
-
-    # Build the corert native components.
-
-    build_managed_corert
-
-    # Build complete
-fi
-
-# If managed build failed, exit with the status code of the managed build
-if [ $BUILDERRORLEVEL != 0 ]; then
-    exit $BUILDERRORLEVEL
-fi
 
 if $__buildnative; then
 
@@ -336,5 +352,39 @@ if $__buildnative; then
 
     # Build complete
 fi
+
+# If native build failed, exit with the status code of the managed build
+if [ $BUILDERRORLEVEL != 0 ]; then
+    exit $BUILDERRORLEVEL
+fi
+
+if $__buildmanaged; then
+
+    # Prepare the system
+
+    prepare_managed_build
+
+    # Build the corert native components.
+
+    build_managed_corert
+
+    # Build complete
+fi
+
+# If managed build failed, exit with the status code of the managed build
+if [ $BUILDERRORLEVEL != 0 ]; then
+    exit $BUILDERRORLEVEL
+fi
+
+pushd ${__scriptpath}/tests
+source ${__scriptpath}/tests/runtest.sh $__BuildOS $__BuildArch $__BuildType -dotnetclipath $__dotnetclipath
+TESTERRORLEVEL=$?
+popd
+
+if [ $TESTERRORLEVEL != 0 ]; then
+    exit $TESTERRORLEVEL
+fi
+
+echo "Product binaries are available at $__ProductBinDir"
 
 exit $BUILDERRORLEVEL

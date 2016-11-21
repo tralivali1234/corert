@@ -1,25 +1,24 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-#include "commontypes.h"
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "debugmacrosext.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
-#include "static_check.h"
+#include "DebugMacrosExt.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
-#include "crst.h"
-#include "range.h"
+#include "Crst.h"
+#include "Range.h"
 #ifdef FEATURE_RWX_MEMORY
 #include "memaccessmgr.h"
 #endif
 #include "allocheap.h"
 
-#include "commonmacros.inl"
+#include "CommonMacros.inl"
 #include "slist.inl"
 
 using namespace rh::util;
@@ -96,7 +95,7 @@ bool AllocHeap::Init(
     }
 #endif // FEATURE_RWX_MEMORY
 
-    BlockListElem *pBlock = new BlockListElem(pbInitialMem, cbInitialMemReserve);
+    BlockListElem *pBlock = new (nothrow) BlockListElem(pbInitialMem, cbInitialMemReserve);
     if (pBlock == NULL)
         return false;
     m_blockList.PushHead(pBlock);
@@ -286,7 +285,7 @@ bool AllocHeap::_AllocNewBlock(UIntNative cbMem)
     if (pbMem == NULL)
         return false;
 
-    BlockListElem *pBlockListElem = new BlockListElem(pbMem, cbMem);
+    BlockListElem *pBlockListElem = new (nothrow) BlockListElem(pbMem, cbMem);
     if (pBlockListElem == NULL)
     {
         PalVirtualFree(pbMem, 0, MEM_RELEASE);
@@ -361,13 +360,13 @@ bool AllocHeap::_CommitFromCurBlock(UIntNative cbMem)
 }
 
 //-------------------------------------------------------------------------------------------------
-void * __cdecl operator new(UIntNative n, AllocHeap * alloc)
+void * __cdecl operator new(size_t n, AllocHeap * alloc)
 {
     return alloc->Alloc(n);
 }
 
 //-------------------------------------------------------------------------------------------------
-void * __cdecl operator new[](UIntNative n, AllocHeap * alloc)
+void * __cdecl operator new[](size_t n, AllocHeap * alloc)
 {
     return alloc->Alloc(n);
 }

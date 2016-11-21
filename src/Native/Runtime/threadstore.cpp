@@ -1,42 +1,32 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 #include "common.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
-#include "static_check.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "holder.h"
-#include "crst.h"
+#include "Crst.h"
 #include "event.h"
-#include "rwlock.h"
+#include "RWLock.h"
 #include "threadstore.h"
-#include "runtimeinstance.h"
-#include "new.h"
+#include "threadstore.inl"
+#include "RuntimeInstance.h"
 #include "ObjectLayout.h"
 #include "TargetPtrs.h"
-#include "EEType.h"
+#include "eetype.h"
 
 #include "slist.inl"
-#else
-#include "runtimeinstance.h"
-#include "slist.inl"
-#endif
+#include "GCMemoryHelpers.h"
 
 EXTERN_C volatile UInt32 RhpTrapThreads = 0;
 
@@ -73,27 +63,22 @@ ThreadStore::ThreadStore() :
     m_ThreadList(),
     m_Lock()
 {
+    SaveCurrentThreadOffsetForDAC();
 }
 
 ThreadStore::~ThreadStore()
 {
-    // @TODO: For now, the approach will be to cleanup everything we can, even in the face of failure in 
-    // individual operations within this method.  We're faced with a difficult situation -- what is the caller
-    // supposed to do on failure?  Wait and try again?  Do nothing?  We will assume they do nothing and 
-    // attempt to free as many of our resources as we can.  If any of those fail, we only leak those parts.
-    // Whereas if we were to fail on the first operation and then return to the caller without doing anymore,
-    // we would have leaked much more.
-
 }
 
 // static 
 ThreadStore * ThreadStore::Create(RuntimeInstance * pRuntimeInstance)
 {
-    NewHolder<ThreadStore> pNewThreadStore = new ThreadStore();
+    NewHolder<ThreadStore> pNewThreadStore = new (nothrow) ThreadStore();
     if (NULL == pNewThreadStore)
         return NULL;
 
-    pNewThreadStore->m_SuspendCompleteEvent.CreateManualEvent(TRUE);
+    if (!pNewThreadStore->m_SuspendCompleteEvent.CreateManualEventNoThrow(true))
+        return NULL;
 
     pNewThreadStore->m_pRuntimeInstance = pRuntimeInstance;
 
@@ -117,9 +102,6 @@ PTR_Thread ThreadStore::GetSuspendingThread()
 
 GPTR_DECL(RuntimeInstance, g_pTheRuntimeInstance);
 
-extern UInt32 _fls_index;
-
-
 // static 
 void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
 {
@@ -133,40 +115,26 @@ void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
     // we want to avoid at construction time because the loader lock is held then.
     Thread * pAttachingThread = RawGetCurrentThread();
 
-#ifndef FEATURE_DECLSPEC_THREAD
-    if (pAttachingThread == NULL)
-        pAttachingThread = (Thread *)CreateCurrentThreadBuffer();
-#else
-    // On CHK build, validate that our GetThread assembly implementation matches the C++ implementation using
-    // TLS.
-    CreateCurrentThreadBuffer();
-#endif
-
-    ASSERT(_fls_index != FLS_OUT_OF_INDEXES);
-    Thread* pThreadFromCurrentFiber = (Thread*)PalFlsGetValue(_fls_index);
-
+    // The thread was already initialized, so it is already attached
     if (pAttachingThread->IsInitialized())
     {
-        if (pThreadFromCurrentFiber != pAttachingThread)
-        {
-            ASSERT_UNCONDITIONALLY("Multiple fibers encountered on a single thread");
-            RhFailFast();
-        }
-
         return;
     }
 
-    if (pThreadFromCurrentFiber != NULL)
-    {
-        ASSERT_UNCONDITIONALLY("Multiple threads encountered from a single fiber");
-        RhFailFast();
-    }
+    PalAttachThread(pAttachingThread);
 
     //
     // Init the thread buffer
     //
     pAttachingThread->Construct();
     ASSERT(pAttachingThread->m_ThreadStateFlags == Thread::TSF_Unknown);
+
+    // The runtime holds the thread store lock for the duration of thread suspension for GC, so let's check to 
+    // see if that's going on and, if so, use a proper wait instead of the RWL's spinning.  NOTE: when we are 
+    // called with fAcquireThreadStoreLock==false, we are being called in a situation where the GC is trying to 
+    // init a GC thread, so we must honor the flag to mean "do not block on GC" or else we will deadlock.
+    if (fAcquireThreadStoreLock && (RhpTrapThreads != 0))
+        RedhawkGCInterface::WaitForGCCompletion();
 
     ThreadStore* pTS = GetThreadStore();
     ReaderWriterLock::WriteHolder write(&pTS->m_Lock, fAcquireThreadStoreLock);
@@ -178,13 +146,6 @@ void ThreadStore::AttachCurrentThread(bool fAcquireThreadStoreLock)
     pAttachingThread->m_ThreadStateFlags = Thread::TSF_Attached;
 
     pTS->m_ThreadList.PushHead(pAttachingThread);
-
-    //
-    // Associate the current fiber with the current thread.  This makes the current fiber the thread's "home"
-    // fiber.  This fiber is the only fiber allowed to execute managed code on this thread.  When this fiber
-    // is destroyed, we consider the thread to be destroyed.
-    //
-    PalFlsSetValue(_fls_index, pAttachingThread);
 }
 
 // static 
@@ -193,46 +154,20 @@ void ThreadStore::AttachCurrentThread()
     AttachCurrentThread(true);
 }
 
-void ThreadStore::DetachCurrentThreadIfHomeFiber()
+void ThreadStore::DetachCurrentThread()
 {
-    //
-    // Note: we call this when each *fiber* is destroyed, because we receive that notification outside
-    // of the Loader Lock.  This allows us to safely acquire the ThreadStore lock.  However, we have to be
-    // extra careful to avoid cleaning up a thread unless the fiber being destroyed is the thread's "home"
-    // fiber, as recorded in AttachCurrentThread.
-    //
-
     // The thread may not have been initialized because it may never have run managed code before.
     Thread * pDetachingThread = RawGetCurrentThread();
-#ifndef FEATURE_DECLSPEC_THREAD
-    if (NULL == pDetachingThread)
-        return;
-#endif // FEATURE_DECLSPEC_THREAD
 
-    ASSERT(_fls_index != FLS_OUT_OF_INDEXES);
-    Thread* pThreadFromCurrentFiber = (Thread*)PalFlsGetValue(_fls_index);
-
+    // The thread was not initialized yet, so it was not attached
     if (!pDetachingThread->IsInitialized())
     {
-        if (pThreadFromCurrentFiber != NULL)
-        {
-            ASSERT_UNCONDITIONALLY("Detaching a fiber from an unknown thread");
-            RhFailFast();
-        }
         return;
     }
 
-    if (pThreadFromCurrentFiber == NULL)
+    if (!PalDetachThread(pDetachingThread))
     {
-        // we've seen this thread, but not this fiber.  It must be a "foreign" fiber that was 
-        // borrowing this thread.
         return;
-    }
-
-    if (pThreadFromCurrentFiber != pDetachingThread)
-    {
-        ASSERT_UNCONDITIONALLY("Detaching a thread from the wrong fiber");
-        RhFailFast();
     }
 
 #ifdef STRESS_LOG
@@ -267,9 +202,6 @@ void ThreadStore::UnlockThreadStore()
 { 
     m_Lock.ReleaseReadLock();
 }
-
-// defined in gcrhenv.cpp
-extern SYSTEM_INFO g_SystemInfo;
 
 void ThreadStore::SuspendAllThreads(CLREventStatic* pCompletionEvent)
 {
@@ -353,12 +285,6 @@ void ThreadStore::ResumeAllThreads(CLREventStatic* pCompletionEvent)
     UnlockThreadStore();
 } // ResumeAllThreads
 
-// static
-bool ThreadStore::IsTrapThreadsRequested()
-{
-    return (RhpTrapThreads != 0);
-}
-
 void ThreadStore::WaitForSuspendComplete()
 {
     UInt32 waitResult = m_SuspendCompleteEvent.Wait(INFINITE, false);
@@ -368,9 +294,7 @@ void ThreadStore::WaitForSuspendComplete()
 
 C_ASSERT(sizeof(Thread) == sizeof(ThreadBuffer));
 
-EXTERN_C Thread * FASTCALL RhpGetThread();
-#ifdef FEATURE_DECLSPEC_THREAD
-__declspec(thread) ThreadBuffer tls_CurrentThread = 
+EXTERN_C DECLSPEC_THREAD ThreadBuffer tls_CurrentThread =
 { 
     { 0 },                              // m_rgbAllocContextBuffer
     Thread::TSF_Unknown,                // m_ThreadStateFlags
@@ -381,113 +305,46 @@ __declspec(thread) ThreadBuffer tls_CurrentThread =
     INVALID_HANDLE_VALUE,               // m_hPalThread
     0,                                  // m_ppvHijackedReturnAddressLocation
     0,                                  // m_pvHijackedReturnAddress
+    0,                                  // m_pExInfoStackHead
     0,                                  // m_pStackLow
     0,                                  // m_pStackHigh
-    0,                                  // m_uPalThreadId
-};
-#else // FEATURE_DECLSPEC_THREAD
-EXTERN_C UInt32 _tls_index;
-
-struct TlsSectionStruct
-{
-    TlsSectionStruct()
-    {
-        // The codegen for __declspec(thread) has two indirections and we'd like to maintain that here, so
-        // we use the slack space in this structure as a place to simluate the ThreadLocalStoragePointer of
-        // the TEB.
-        ThreadLocalStoragePointer = this;
-    }
-
-    void *          ThreadLocalStoragePointer;  // simulate __declspec(thread)
-    UInt32          padding;                    // make the offset of tls_CurrentThread match between mechanisms
-    ThreadBuffer    tls_CurrentThread;
-};
-#endif // FEATURE_DECLSPEC_THREAD
-
-// static
-void * ThreadStore::CreateCurrentThreadBuffer()
-{
-    void * pvBuffer;
-
-#ifdef FEATURE_DECLSPEC_THREAD
-
-    pvBuffer = &tls_CurrentThread;
-
-#else // FEATURE_DECLSPEC_THREAD
-
-    ASSERT(_tls_index < 64);
-    ASSERT(NULL == PalTlsGetValue(_tls_index));
-
-    TlsSectionStruct * pTlsBlock = new TlsSectionStruct();
-    ASSERT(NULL != pTlsBlock);   // we require NT6's __declspec(thread) support for reliability
-
-    PalTlsSetValue(_tls_index, pTlsBlock);
-
-    pvBuffer = &pTlsBlock->tls_CurrentThread;
-
-#endif // FEATURE_DECLSPEC_THREAD
-#if !defined(USE_PORTABLE_HELPERS) // No assembly routine defined to verify against.
-    ASSERT(RhpGetThread() == pvBuffer);
-#endif // !defined(USE_PORTABLE_HELPERS)
-    return pvBuffer;
-}
-
-// static
-Thread * ThreadStore::RawGetCurrentThread()
-{
-#ifdef FEATURE_DECLSPEC_THREAD
-    return (Thread *) &tls_CurrentThread;
-#else
-    return RhpGetThread();
-#endif
-}
-
-// static
-Thread * ThreadStore::GetCurrentThread()
-{
-    Thread * pCurThread = RawGetCurrentThread();
-
-    // If this assert fires, and you only need the Thread pointer if the thread has ever previously
-    // entered the runtime, then you should be using GetCurrentThreadIfAvailable instead.
-    ASSERT(pCurThread->IsInitialized());    
-    return pCurThread;
+    0,                                  // m_pTEB
+    0,                                  // m_uPalThreadIdForLogging
 };
 
-// static
-Thread * ThreadStore::GetCurrentThreadIfAvailable()
-{
-    Thread * pCurThread = RawGetCurrentThread();
-    if (pCurThread->IsInitialized())
-        return pCurThread;
-
-    return NULL;
-}
 #endif // !DACCESS_COMPILE
+
+
+#ifdef _WIN32
+
+#ifndef DACCESS_COMPILE
 
 // Keep a global variable in the target process which contains
 // the address of _tls_index.  This is the breadcrumb needed
 // by DAC to read _tls_index since we don't control the 
 // declaration of _tls_index directly.
+
+// volatile to prevent the compiler from removing the unused global variable
+volatile UInt32 * p_tls_index;
+volatile UInt32 SECTIONREL__tls_CurrentThread;
+
 EXTERN_C UInt32 _tls_index;
-GPTR_IMPL_INIT(UInt32, p_tls_index, &_tls_index);
 
-#ifndef DACCESS_COMPILE
-// We must prevent the linker from removing the unused global variable 
-// that DAC will be looking at to find _tls_index.
-#ifdef _WIN64
-#pragma comment(linker, "/INCLUDE:?p_tls_index@@3PEAIEA")
-#else
-#pragma comment(linker, "/INCLUDE:?p_tls_index@@3PAIA")
-#endif
+void ThreadStore::SaveCurrentThreadOffsetForDAC()
+{
+    p_tls_index = &_tls_index;
 
-#else
-#if defined(_WIN64)
-#define OFFSETOF__TLS__tls_CurrentThread            0x20
-#elif defined(_ARM_)
-#define OFFSETOF__TLS__tls_CurrentThread            0x10
-#else
-#define OFFSETOF__TLS__tls_CurrentThread            0x08
-#endif
+    UInt8 * pTls = *(UInt8 **)(PalNtCurrentTeb() + OFFSETOF__TEB__ThreadLocalStoragePointer);
+
+    UInt8 * pOurTls = *(UInt8 **)(pTls + (_tls_index * sizeof(void*)));
+
+    SECTIONREL__tls_CurrentThread = (UInt32)((UInt8 *)&tls_CurrentThread - pOurTls);
+}
+
+#else // DACCESS_COMPILE
+
+GPTR_IMPL(UInt32, p_tls_index);
+GVAL_IMPL(UInt32, SECTIONREL__tls_CurrentThread);
 
 //
 // This routine supports the !Thread debugger extension routine
@@ -508,12 +365,21 @@ PTR_Thread ThreadStore::GetThreadFromTEB(TADDR pTEB)
     if (pOurTls == NULL)
         return NULL;
 
-    return (PTR_Thread)(pOurTls + OFFSETOF__TLS__tls_CurrentThread);
+    return (PTR_Thread)(pOurTls + SECTIONREL__tls_CurrentThread);
 }
-#endif
+
+#endif // DACCESS_COMPILE
+
+#else // _WIN32
+
+void ThreadStore::SaveCurrentThreadOffsetForDAC()
+{
+}
+
+#endif // _WIN32
+
 
 #ifndef DACCESS_COMPILE
-EXTERN_C void REDHAWK_CALLCONV RhpBulkWriteBarrier(void* pMemStart, UInt32 cbMemSize);
 
 // internal static extern unsafe bool RhGetExceptionsForCurrentThread(Exception[] outputArray, out int writtenCountOut);
 COOP_PINVOKE_HELPER(Boolean, RhGetExceptionsForCurrentThread, (Array* pOutputArray, Int32* pWrittenCountOut))
@@ -524,7 +390,7 @@ COOP_PINVOKE_HELPER(Boolean, RhGetExceptionsForCurrentThread, (Array* pOutputArr
 Boolean ThreadStore::GetExceptionsForCurrentThread(Array* pOutputArray, Int32* pWrittenCountOut)
 {
     Int32 countWritten = 0;
-
+    Object** pArrayElements;
     Thread * pThread = GetCurrentThread();
     
     for (PTR_ExInfo pInfo = pThread->m_pExInfoStackHead; pInfo != NULL; pInfo = pInfo->m_pPrevExInfo)
@@ -549,7 +415,7 @@ Boolean ThreadStore::GetExceptionsForCurrentThread(Array* pOutputArray, Int32* p
     if (countWritten == 0)
         return Boolean_true;
 
-    Object** pArrayElements = (Object**)pOutputArray->GetArrayData();
+    pArrayElements = (Object**)pOutputArray->GetArrayData();
     for (PTR_ExInfo pInfo = pThread->m_pExInfoStackHead; pInfo != NULL; pInfo = pInfo->m_pPrevExInfo)
     {
         if (pInfo->m_exception == NULL)
