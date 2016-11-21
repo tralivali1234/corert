@@ -1,45 +1,27 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-
-// Abstracted thread ID.  This doesn't really belong in this file, but there is not currently any better place
-// for it.  
-class EEThreadId
-{
-public:
-    EEThreadId(uint32_t uiId) : m_uiId(uiId) {}
-#ifndef DACCESS_COMPILE
-    bool IsSameThread();
-#endif
-
-private:
-    uint32_t m_uiId;
-};
-
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // -----------------------------------------------------------------------------------------------------------
 //
 // Minimal Crst implementation based on CRITICAL_SECTION. Doesn't support much except for the basic locking
-// functionality (in particular there is no rank violation checking, but then again there's only one Crst type
-// used currently).
+// functionality (in particular there is no rank violation checking).
 //
 
 enum CrstType
 {
     CrstHandleTable,
-    CrstInstanceStore,
-    CrstThreadStore,
     CrstDispatchCache,
     CrstAllocHeap,
-    CrstModuleList,
     CrstGenericInstHashtab,
     CrstMemAccessMgr,
     CrstInterfaceDispatchGlobalLists,
     CrstStressLog,
     CrstRestrictedCallouts,
     CrstGcStressControl,
+    CrstSuspendEE,
+    CrstCastCache,
 };
 
 enum CrstFlags
@@ -70,8 +52,7 @@ public:
 private:
     CRITICAL_SECTION    m_sCritSec;
 #if defined(_DEBUG)
-    uint32_t            m_uiOwnerId;
-    static const uint32_t UNOWNED = 0;
+    EEThreadId          m_uiOwnerId;
 #endif // _DEBUG
 };
 

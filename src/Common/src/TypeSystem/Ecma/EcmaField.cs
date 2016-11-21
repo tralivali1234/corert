@@ -1,5 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Diagnostics;
@@ -11,9 +12,9 @@ using Internal.TypeSystem;
 
 namespace Internal.TypeSystem.Ecma
 {
-    public sealed class EcmaField : FieldDesc
+    public sealed class EcmaField : FieldDesc, EcmaModule.IEntityHandleObject
     {
-        static class FieldFlags
+        private static class FieldFlags
         {
             public const int BasicMetadataCache     = 0x0001;
             public const int Static                 = 0x0002;
@@ -25,19 +26,33 @@ namespace Internal.TypeSystem.Ecma
             public const int ThreadStatic           = 0x0200;
         };
 
-        EcmaType _type;
-        FieldDefinitionHandle _handle;
+        private EcmaType _type;
+        private FieldDefinitionHandle _handle;
 
         // Cached values
-        ThreadSafeFlags _fieldFlags;
-        TypeDesc _fieldType;
-        string _name;
+        private ThreadSafeFlags _fieldFlags;
+        private TypeDesc _fieldType;
+        private string _name;
 
         internal EcmaField(EcmaType type, FieldDefinitionHandle handle)
         {
             _type = type;
             _handle = handle;
+
+#if DEBUG
+            // Initialize name eagerly in debug builds for convenience
+            this.ToString();
+#endif
         }
+
+        EntityHandle EcmaModule.IEntityHandleObject.Handle
+        {
+            get
+            {
+                return _handle;
+            }
+        }
+
 
         public override TypeSystemContext Context
         {
@@ -47,7 +62,7 @@ namespace Internal.TypeSystem.Ecma
             }
         }
 
-        public override MetadataType OwningType
+        public override DefType OwningType
         {
             get
             {
@@ -59,7 +74,7 @@ namespace Internal.TypeSystem.Ecma
         {
             get
             {
-                return _type.Module;
+                return _type.EcmaModule;
             }
         }
 
@@ -127,21 +142,22 @@ namespace Internal.TypeSystem.Ecma
             // a separate cache that might not be accessed very frequently.
             if ((mask & FieldFlags.AttributeMetadataCache) != 0)
             {
-                var fieldDefinition = this.MetadataReader.GetFieldDefinition(_handle);
+                var metadataReader = this.MetadataReader;
+                var fieldDefinition = metadataReader.GetFieldDefinition(_handle);
 
-                foreach (var customAttributeHandle in fieldDefinition.GetCustomAttributes())
+                foreach (var attributeHandle in fieldDefinition.GetCustomAttributes())
                 {
-                    var customAttribute = this.MetadataReader.GetCustomAttribute(customAttributeHandle);
-                    var constructorHandle = customAttribute.Constructor;
+                    StringHandle namespaceHandle, nameHandle;
+                    if (!metadataReader.GetAttributeNamespaceAndName(attributeHandle, out namespaceHandle, out nameHandle))
+                        continue;
 
-                    var constructor = Module.GetMethod(constructorHandle);
-                    var type = constructor.OwningType;
-
-                    switch (type.Name)
+                    if (metadataReader.StringComparer.Equals(namespaceHandle, "System"))
                     {
-                        case "System.ThreadStaticAttribute":
-                            flags |= FieldFlags.ThreadStatic;
-                            break;
+                        if (metadataReader.StringComparer.Equals(nameHandle, "ThreadStaticAttribute"))
+                        {
+                            // TODO: Thread statics
+                            //flags |= FieldFlags.ThreadStatic;
+                        }
                     }
                 }
 
@@ -152,6 +168,7 @@ namespace Internal.TypeSystem.Ecma
 
             _fieldFlags.AddFlags(flags);
 
+            Debug.Assert((flags & mask) != 0);
             return flags & mask;
         }
 
@@ -197,7 +214,7 @@ namespace Internal.TypeSystem.Ecma
             }
         }
 
-        public bool IsLiteral
+        public override bool IsLiteral
         {
             get
             {
@@ -230,14 +247,37 @@ namespace Internal.TypeSystem.Ecma
             }
         }
 
-        public bool HasCustomAttribute(string customAttributeName)
+        public override bool HasCustomAttribute(string attributeNamespace, string attributeName)
         {
-            return Module.HasCustomAttribute(MetadataReader.GetFieldDefinition(_handle).GetCustomAttributes(), customAttributeName);
+            return !MetadataReader.GetCustomAttributeHandle(MetadataReader.GetFieldDefinition(_handle).GetCustomAttributes(),
+                attributeNamespace, attributeName).IsNil;
         }
 
         public override string ToString()
         {
             return _type.ToString() + "." + Name;
+        }
+    }
+
+    public static class EcmaFieldExtensions
+    {
+        /// <summary>
+        /// Retrieves the data associated with an RVA mapped field from the PE module.
+        /// </summary>
+        public static byte[] GetFieldRvaData(this EcmaField field)
+        {
+            Debug.Assert(field.HasRva);
+            int addr = field.MetadataReader.GetFieldDefinition(field.Handle).GetRelativeVirtualAddress();
+            var memBlock = field.Module.PEReader.GetSectionData(addr).GetContent();
+
+            int size = field.FieldType.GetElementSize();
+            if (size > memBlock.Length)
+                throw new BadImageFormatException();
+
+            byte[] result = new byte[size];
+            memBlock.CopyTo(0, result, 0, result.Length);
+
+            return result;
         }
     }
 }

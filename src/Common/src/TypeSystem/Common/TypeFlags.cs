@@ -1,5 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 
@@ -38,12 +39,22 @@ namespace Internal.TypeSystem
         // Unused         0x16
 
         Array           = 0x17,
-        ByRef           = 0x18,
-        Pointer         = 0x19,
+        SzArray         = 0x18,
+        ByRef           = 0x19,
+        Pointer         = 0x1A,
+        FunctionPointer = 0x1B,
 
-        GenericParameter = 0x1C,
+        GenericParameter        = 0x1C,
+        SignatureTypeVariable   = 0x1D,
+        SignatureMethodVariable = 0x1E,
 
         ContainsGenericVariables         = 0x100,
         ContainsGenericVariablesComputed = 0x200,
+
+        HasGenericVariance         = 0x400,
+        HasGenericVarianceComputed = 0x800,
+
+        HasStaticConstructor         = 0x1000,
+        HasStaticConstructorComputed = 0x2000,
     }
 }

@@ -1,5 +1,6 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Runtime.InteropServices;
@@ -19,7 +20,7 @@ namespace Internal.JitInterface
     {
         internal static unsafe CORINFO_METHOD_STRUCT_* Construct(int i)
         {
-            return (CORINFO_METHOD_STRUCT_*)((i+1) << 4);
+            return (CORINFO_METHOD_STRUCT_*)((i + 1) << 4);
         }
 
         internal static unsafe int GetValue(CORINFO_METHOD_STRUCT_* val)
@@ -32,7 +33,7 @@ namespace Internal.JitInterface
     {
         internal static unsafe CORINFO_FIELD_STRUCT_* Construct(int i)
         {
-            return (CORINFO_FIELD_STRUCT_*)((i+1) << 4);
+            return (CORINFO_FIELD_STRUCT_*)((i + 1) << 4);
         }
         internal static unsafe int GetValue(CORINFO_FIELD_STRUCT_* val)
         {
@@ -44,7 +45,7 @@ namespace Internal.JitInterface
     {
         internal static unsafe CORINFO_CLASS_STRUCT_* Construct(int i)
         {
-            return (CORINFO_CLASS_STRUCT_*)((i+1) << 4);
+            return (CORINFO_CLASS_STRUCT_*)((i + 1) << 4);
         }
 
         internal static unsafe int GetValue(CORINFO_CLASS_STRUCT_* val)
@@ -61,7 +62,7 @@ namespace Internal.JitInterface
     {
         internal static unsafe CORINFO_MODULE_STRUCT_* Construct(int i)
         {
-            return (CORINFO_MODULE_STRUCT_*)((i+1) << 4);
+            return (CORINFO_MODULE_STRUCT_*)((i + 1) << 4);
         }
         internal static unsafe int GetValue(CORINFO_MODULE_STRUCT_* val)
         {
@@ -157,12 +158,12 @@ namespace Internal.JitInterface
         public mdToken token;
 
         public CorInfoType retType { get { return (CorInfoType)_retType; } set { _retType = (byte)value; } }
-        CorInfoCallConv getCallConv() { return (CorInfoCallConv)((callConv & CorInfoCallConv.CORINFO_CALLCONV_MASK)); }
-        bool hasThis() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_HASTHIS) != 0); }
-        bool hasExplicitThis() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_EXPLICITTHIS) != 0); }
-        uint totalILArgs() { return (uint)(numArgs + (hasThis() ? 1 : 0)); }
-        bool isVarArg() { return ((getCallConv() == CorInfoCallConv.CORINFO_CALLCONV_VARARG) || (getCallConv() == CorInfoCallConv.CORINFO_CALLCONV_NATIVEVARARG)); }
-        bool hasTypeArg() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_PARAMTYPE) != 0); }
+        private CorInfoCallConv getCallConv() { return (CorInfoCallConv)((callConv & CorInfoCallConv.CORINFO_CALLCONV_MASK)); }
+        private bool hasThis() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_HASTHIS) != 0); }
+        private bool hasExplicitThis() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_EXPLICITTHIS) != 0); }
+        private uint totalILArgs() { return (uint)(numArgs + (hasThis() ? 1 : 0)); }
+        private bool isVarArg() { return ((getCallConv() == CorInfoCallConv.CORINFO_CALLCONV_VARARG) || (getCallConv() == CorInfoCallConv.CORINFO_CALLCONV_NATIVEVARARG)); }
+        private bool hasTypeArg() { return ((callConv & CorInfoCallConv.CORINFO_CALLCONV_PARAMTYPE) != 0); }
     };
 
     //----------------------------------------------------------------------------
@@ -239,11 +240,16 @@ namespace Internal.JitInterface
         CORINFO_LOOKUP_CLASSPARAM,
     }
 
-    public struct CORINFO_LOOKUP_KIND
+    public unsafe struct CORINFO_LOOKUP_KIND
     {
         private byte _needsRuntimeLookup;
         public bool needsRuntimeLookup { get { return _needsRuntimeLookup != 0; } set { _needsRuntimeLookup = value ? (byte)1 : (byte)0; } }
         public CORINFO_RUNTIME_LOOKUP_KIND runtimeLookupKind;
+
+        // The 'runtimeLookupFlags' and 'runtimeLookupArgs' fields
+        // are just for internal VM / ZAP communication, not to be used by the JIT.
+        public ushort runtimeLookupFlags;
+        public void* runtimeLookupArgs;
     }
 
     // CORINFO_RUNTIME_LOOKUP indicates the details of the runtime lookup
@@ -287,7 +293,7 @@ namespace Internal.JitInterface
         public CORINFO_LOOKUP_KIND lookupKind;
 
         // If kind.needsRuntimeLookup then this indicates how to do the lookup
-        [FieldOffset(8)]
+        [FieldOffset(24)]
         public CORINFO_RUNTIME_LOOKUP runtimeLookup;
 
         // If the handle is obtained at compile-time, then this handle is the "exact" handle (class, method, or field)
@@ -295,7 +301,7 @@ namespace Internal.JitInterface
         //     IAT_VALUE --> "handle" stores the real handle or "addr " stores the computed address
         //     IAT_PVALUE --> "addr" stores a pointer to a location which will hold the real handle
         //     IAT_PPVALUE --> "addr" stores a double indirection to a location which will hold the real handle
-        [FieldOffset(8)]
+        [FieldOffset(24)]
         public CORINFO_CONST_LOOKUP constLookup;
     }
 
@@ -412,16 +418,28 @@ namespace Internal.JitInterface
                                                    CORINFO_GENERICS_CTXT_FROM_METHODDESC |
                                                    CORINFO_GENERICS_CTXT_FROM_METHODTABLE),
         CORINFO_GENERICS_CTXT_KEEP_ALIVE = 0x00000100, // Keep the generics context alive throughout the method even if there is no explicit use, and report its location to the CLR
-
     }
 
-    enum CorInfoIntrinsics
+    internal enum CorInfoIntrinsics
     {
         CORINFO_INTRINSIC_Sin,
         CORINFO_INTRINSIC_Cos,
         CORINFO_INTRINSIC_Sqrt,
         CORINFO_INTRINSIC_Abs,
         CORINFO_INTRINSIC_Round,
+        CORINFO_INTRINSIC_Cosh,
+        CORINFO_INTRINSIC_Sinh,
+        CORINFO_INTRINSIC_Tan,
+        CORINFO_INTRINSIC_Tanh,
+        CORINFO_INTRINSIC_Asin,
+        CORINFO_INTRINSIC_Acos,
+        CORINFO_INTRINSIC_Atan,
+        CORINFO_INTRINSIC_Atan2,
+        CORINFO_INTRINSIC_Log10,
+        CORINFO_INTRINSIC_Pow,
+        CORINFO_INTRINSIC_Exp,
+        CORINFO_INTRINSIC_Ceiling,
+        CORINFO_INTRINSIC_Floor,
         CORINFO_INTRINSIC_GetChar,              // fetch character out of string
         CORINFO_INTRINSIC_Array_GetDimLength,   // Get number of elements in a given dimension of an array
         CORINFO_INTRINSIC_Array_Get,            // Get the value of an element in an array
@@ -436,9 +454,7 @@ namespace Internal.JitInterface
         CORINFO_INTRINSIC_TypeNEQ,
         CORINFO_INTRINSIC_Object_GetType,
         CORINFO_INTRINSIC_StubHelpers_GetStubContext,
-// #ifdef _WIN64
         CORINFO_INTRINSIC_StubHelpers_GetStubContextAddr,
-// #endif
         CORINFO_INTRINSIC_StubHelpers_GetNDirectTarget,
         CORINFO_INTRINSIC_InterlockedAdd32,
         CORINFO_INTRINSIC_InterlockedAdd64,
@@ -500,9 +516,6 @@ namespace Internal.JitInterface
         // This is due to how we implement the NoStringInterningAttribute
         // (by reusing the fixup table).
         INLINE_SAME_THIS = 0x00000004, // You can inline only if the callee is on the same this reference as caller
-#if MDIL
-    INLINE_NOT_FOR_MDIL     = 0x00000008, // You cannot inline this method for MDIL
-#endif
     }
 
     // If you add more values here, keep it in sync with TailCallTypeMap in ..\vm\ClrEtwAll.man
@@ -563,7 +576,7 @@ namespace Internal.JitInterface
 
     // these are the attribute flags for fields and methods (getMethodAttribs)
     [Flags]
-    enum CorInfoFlag : uint
+    internal enum CorInfoFlag : uint
     {
         //  CORINFO_FLG_UNUSED                = 0x00000001,
         //  CORINFO_FLG_UNUSED                = 0x00000002,
@@ -626,11 +639,6 @@ namespace Internal.JitInterface
         CORINFO_EH_CLAUSE_FILTER = 0x0001, // If this bit is on, then this EH entry is for a filter
         CORINFO_EH_CLAUSE_FINALLY = 0x0002, // This clause is a finally clause
         CORINFO_EH_CLAUSE_FAULT = 0x0004, // This clause is a fault   clause
-#if REDHAWK
-    CORINFO_EH_CLAUSE_METHOD_BOUNDARY   = 0x0008,       // This clause indicates the boundary of an inlined method
-    CORINFO_EH_CLAUSE_FAIL_FAST         = 0x0010,       // This clause will cause the exception to go unhandled
-    CORINFO_EH_CLAUSE_INDIRECT_TYPE_REFERENCE = 0x0020, // This clause is typed, but type reference is indirect.
-#endif
     };
 
     public struct CORINFO_EH_CLAUSE
@@ -645,9 +653,6 @@ namespace Internal.JitInterface
                 {
                     DWORD                   ClassToken;       // use for type-based exception handlers
                     DWORD                   FilterOffset;     // use for filter-based exception handlers (COR_ILEXCEPTION_FILTER is set)
-            #ifdef REDHAWK
-                    void *                  EETypeReference;  // use to hold a ref to the EEType for type-based exception handlers.
-            #endif
                 };*/
     }
 
@@ -812,9 +817,6 @@ namespace Internal.JitInterface
     public struct CORINFO_HELPER_ARG
     {
         public IntPtr argHandle;
-#if  MDIL
-    public uint token;
-#endif
         public CorInfoAccessAllowedHelperArgType argType;
     }
 
@@ -845,6 +847,12 @@ namespace Internal.JitInterface
         CORINFO_PAL,
     }
 
+    public enum CORINFO_RUNTIME_ABI
+    {
+        CORINFO_DESKTOP_ABI = 0x100,
+        CORINFO_CORECLR_ABI = 0x200,
+        CORINFO_CORERT_ABI = 0x300,
+    }
 
     // For some highly optimized paths, the JIT must generate code that directly
     // manipulates internal EE data structures. The getEEInfo() helper returns
@@ -875,12 +883,28 @@ namespace Internal.JitInterface
         public uint offsetOfDelegateInstance;
         public uint offsetOfDelegateFirstTarget;
 
+        // Secure delegate offsets
+        public uint offsetOfSecureDelegateIndirectCell;
+
         // Remoting offsets
         public uint offsetOfTransparentProxyRP;
         public uint offsetOfRealProxyServer;
 
         // Array offsets
         public uint offsetOfObjArrayData;
+
+        // Reverse PInvoke offsets
+        public uint sizeOfReversePInvokeFrame;
+
+        // OS Page size
+        public UIntPtr osPageSize;
+
+        // Null object offset
+        public UIntPtr maxUncheckedOffsetForNullObject;
+
+        // Target ABI. Combined with target architecture and OS to determine
+        // GC, EH, and unwind styles.
+        public CORINFO_RUNTIME_ABI targetAbi;
 
         public CORINFO_OS osType;
         public uint osMajor;
@@ -1016,11 +1040,13 @@ namespace Internal.JitInterface
         public CORINFO_THIS_TRANSFORM thisTransform;
 
         public CORINFO_CALL_KIND kind;
+
         public uint _nullInstanceCheck;
         public bool nullInstanceCheck { get { return _nullInstanceCheck != 0; } set { _nullInstanceCheck = value ? (byte)1 : (byte)0; } }
 
         // Context for inlining and hidden arg
         public CORINFO_CONTEXT_STRUCT* contextHandle;
+
         public uint _exactContextNeedsRuntimeLookup; // Set if contextHandle is approx handle. Runtime lookup is required to get the exact handle.
         public bool exactContextNeedsRuntimeLookup { get { return _exactContextNeedsRuntimeLookup != 0; } set { _exactContextNeedsRuntimeLookup = value ? (byte)1 : (byte)0; } }
 
@@ -1031,6 +1057,8 @@ namespace Internal.JitInterface
         // Used by Ready-to-Run
         public CORINFO_CONST_LOOKUP instParamLookup;
 
+        public uint _secureDelegateInvoke;
+        public bool secureDelegateInvoke { get { return _secureDelegateInvoke != 0; } set { _secureDelegateInvoke = value ? (byte)1 : (byte)0; } }
     }
 
 
@@ -1050,6 +1078,7 @@ namespace Internal.JitInterface
         CORINFO_FIELD_STATIC_GENERICS_STATIC_HELPER, // static field access using the "generic static" helper (argument is MethodTable *)
         CORINFO_FIELD_STATIC_ADDR_HELPER,       // static field accessed using address-of helper (argument is FieldDesc *)
         CORINFO_FIELD_STATIC_TLS,               // unmanaged TLS access
+        CORINFO_FIELD_STATIC_READYTORUN_HELPER, // static field access using a runtime lookup helper
 
         CORINFO_FIELD_INTRINSIC_ZERO,           // intrinsic zero (IntPtr.Zero, UIntPtr.Zero)
         CORINFO_FIELD_INTRINSIC_EMPTY_STRING,   // intrinsic emptry string (String.Empty)
@@ -1087,14 +1116,57 @@ namespace Internal.JitInterface
 
         // Used by Ready-to-Run
         public CORINFO_CONST_LOOKUP fieldLookup;
+    };
 
+    // System V struct passing
+    // The Classification types are described in the ABI spec at http://www.x86-64.org/documentation/abi.pdf
+    public enum SystemVClassificationType : byte
+    {
+        SystemVClassificationTypeUnknown            = 0,
+        SystemVClassificationTypeStruct             = 1,
+        SystemVClassificationTypeNoClass            = 2,
+        SystemVClassificationTypeMemory             = 3,
+        SystemVClassificationTypeInteger            = 4,
+        SystemVClassificationTypeIntegerReference   = 5,
+        SystemVClassificationTypeIntegerByRef       = 6,
+        SystemVClassificationTypeSSE                = 7,
+        // SystemVClassificationTypeSSEUp           = Unused, // Not supported by the CLR.
+        // SystemVClassificationTypeX87             = Unused, // Not supported by the CLR.
+        // SystemVClassificationTypeX87Up           = Unused, // Not supported by the CLR.
+        // SystemVClassificationTypeComplexX87      = Unused, // Not supported by the CLR.
+        SystemVClassificationTypeMAX = 7,
     };
 
     public struct SYSTEMV_AMD64_CORINFO_STRUCT_REG_PASSING_DESCRIPTOR
     {
+        public byte _passedInRegisters;
+        // Whether the struct is passable/passed (this includes struct returning) in registers.
+        public bool passedInRegisters { get { return _passedInRegisters != 0; } set { _passedInRegisters = value ? (byte)1 : (byte)0; } }
+
+        // Number of eightbytes for this struct.
+        public byte eightByteCount;
+
+        // The eightbytes type classification.
+        public SystemVClassificationType eightByteClassifications0;
+        public SystemVClassificationType eightByteClassifications1;
+
+        // The size of the eightbytes (an eightbyte could include padding. This represents the no padding size of the eightbyte).
+        public byte eightByteSizes0;
+        public byte eightByteSizes1;
+
+        // The start offset of the eightbytes (in bytes).
+        public byte eightByteOffsets0;
+        public byte eightByteOffsets1;
     };
 
-    // DEBUGGER DATQA
+    // DEBUGGER DATA
+    public enum MappingTypes
+    {
+        NO_MAPPING = -1, // -- The IL offset corresponds to no source code (such as EH step blocks).
+        PROLOG = -2,     // -- The IL offset indicates a prolog
+        EPILOG = -3      // -- The IL offset indicates an epilog
+    }
+
     public enum BoundaryTypes
     {
         NO_BOUNDARIES = 0x00,     // No implicit boundaries
@@ -1119,7 +1191,6 @@ namespace Internal.JitInterface
         CALL_SITE = 0x04, // This is a call site.
         NATIVE_END_OFFSET_UNKNOWN = 0x08, // Indicates a epilog endpoint
         CALL_INSTRUCTION = 0x10  // The actual instruction of a call.
-
     };
 
     public struct OffsetMapping
@@ -1145,138 +1216,146 @@ namespace Internal.JitInterface
         public uint startOffset;
         public uint endOffset;
         public uint varNumber;
-        public VarLoc loc;
+        public VarLoc varLoc;
     };
 
-
-    // VarLoc describes the location of a native variable.  Note that currently, VLT_REG_BYREF and VLT_STK_BYREF 
-    // are only used for value types on X64.
-
-    public enum VarLocType
-    {
-        VLT_REG,        // variable is in a register
-        VLT_REG_BYREF,  // address of the variable is in a register
-        VLT_REG_FP,     // variable is in an fp register
-        VLT_STK,        // variable is on the stack (memory addressed relative to the frame-pointer)
-        VLT_STK_BYREF,  // address of the variable is on the stack (memory addressed relative to the frame-pointer)
-        VLT_REG_REG,    // variable lives in two registers
-        VLT_REG_STK,    // variable lives partly in a register and partly on the stack
-        VLT_STK_REG,    // reverse of VLT_REG_STK
-        VLT_STK2,       // variable lives in two slots on the stack
-        VLT_FPSTK,      // variable lives on the floating-point stack
-        VLT_FIXED_VA,   // variable is a fixed argument in a varargs function (relative to VARARGS_HANDLE)
-
-        VLT_COUNT,
-        VLT_INVALID,
-#if MDIL
-        VLT_MDIL_SYMBOLIC = 0x20
-#endif
-
-    };
-
+    // The following 16 bytes come from coreclr types. See comment below.
     public struct VarLoc
     {
-        public VarLocType vlType;
+       public int vlType;
+       // The 64bit field is here to keep VarLoc 8byte aligned on Amd64.
+       // For x86, we need to change the VarLoc definition here.
+       public long A;   
+       public int B;
 
-        public int A; // Representing a union in C# is difficult.
-        public int B;
-        public int C;
         /*
-        union
-        {
-            // VLT_REG/VLT_REG_FP -- Any pointer-sized enregistered value (TYP_INT, TYP_REF, etc)
-            // eg. EAX
-            // VLT_REG_BYREF -- the specified register contains the address of the variable
-            // eg. [EAX]
+           Changes to the following types may require revisiting the above layout.
+     
+            In coreclr\src\inc\cordebuginfo.h
 
-            struct
+            enum VarLocType
             {
-                RegNum      vlrReg;
-            } vlReg;
+                VLT_REG,        // variable is in a register
+                VLT_REG_BYREF,  // address of the variable is in a register
+                VLT_REG_FP,     // variable is in an fp register
+                VLT_STK,        // variable is on the stack (memory addressed relative to the frame-pointer)
+                VLT_STK_BYREF,  // address of the variable is on the stack (memory addressed relative to the frame-pointer)
+                VLT_REG_REG,    // variable lives in two registers
+                VLT_REG_STK,    // variable lives partly in a register and partly on the stack
+                VLT_STK_REG,    // reverse of VLT_REG_STK
+                VLT_STK2,       // variable lives in two slots on the stack
+                VLT_FPSTK,      // variable lives on the floating-point stack
+                VLT_FIXED_VA,   // variable is a fixed argument in a varargs function (relative to VARARGS_HANDLE)
 
-            // VLT_STK -- Any 32 bit value which is on the stack
-            // eg. [ESP+0x20], or [EBP-0x28]
-            // VLT_STK_BYREF -- the specified stack location contains the address of the variable
-            // eg. mov EAX, [ESP+0x20]; [EAX]
+                VLT_COUNT,
+                VLT_INVALID,
+        #ifdef MDIL
+                VLT_MDIL_SYMBOLIC = 0x20
+        #endif
 
-            struct
+            };
+
+            struct VarLoc
             {
-                RegNum      vlsBaseReg;
-                signed      vlsOffset;
-            } vlStk;
+                VarLocType      vlType;
 
-            // VLT_REG_REG -- TYP_LONG with both DWords enregistred
-            // eg. RBM_EAXEDX
-
-            struct
-            {
-                RegNum      vlrrReg1;
-                RegNum      vlrrReg2;
-            } vlRegReg;
-
-            // VLT_REG_STK -- Partly enregistered TYP_LONG
-            // eg { LowerDWord=EAX UpperDWord=[ESP+0x8] }
-
-            struct
-            {
-                RegNum      vlrsReg;
-                struct
+                union
                 {
-                    RegNum      vlrssBaseReg;
-                    signed      vlrssOffset;
-                }           vlrsStk;
-            } vlRegStk;
+                    // VLT_REG/VLT_REG_FP -- Any pointer-sized enregistered value (TYP_INT, TYP_REF, etc)
+                    // eg. EAX
+                    // VLT_REG_BYREF -- the specified register contains the address of the variable
+                    // eg. [EAX]
 
-            // VLT_STK_REG -- Partly enregistered TYP_LONG
-            // eg { LowerDWord=[ESP+0x8] UpperDWord=EAX }
+                    struct
+                    {
+                        RegNum      vlrReg;
+                    } vlReg;
 
-            struct
-            {
-                struct
-                {
-                    RegNum      vlsrsBaseReg;
-                    signed      vlsrsOffset;
-                }           vlsrStk;
-                RegNum      vlsrReg;
-            } vlStkReg;
+                    // VLT_STK -- Any 32 bit value which is on the stack
+                    // eg. [ESP+0x20], or [EBP-0x28]
+                    // VLT_STK_BYREF -- the specified stack location contains the address of the variable
+                    // eg. mov EAX, [ESP+0x20]; [EAX]
 
-            // VLT_STK2 -- Any 64 bit value which is on the stack,
-            // in 2 successsive DWords.
-            // eg 2 DWords at [ESP+0x10]
+                    struct
+                    {
+                        RegNum      vlsBaseReg;
+                        signed      vlsOffset;
+                    } vlStk;
 
-            struct
-            {
-                RegNum      vls2BaseReg;
-                signed      vls2Offset;
-            } vlStk2;
+                    // VLT_REG_REG -- TYP_LONG with both DWords enregistred
+                    // eg. RBM_EAXEDX
 
-            // VLT_FPSTK -- enregisterd TYP_DOUBLE (on the FP stack)
-            // eg. ST(3). Actually it is ST("FPstkHeigth - vpFpStk")
+                    struct
+                    {
+                        RegNum      vlrrReg1;
+                        RegNum      vlrrReg2;
+                    } vlRegReg;
 
-            struct
-            {
-                unsigned        vlfReg;
-            } vlFPstk;
+                    // VLT_REG_STK -- Partly enregistered TYP_LONG
+                    // eg { LowerDWord=EAX UpperDWord=[ESP+0x8] }
 
-            // VLT_FIXED_VA -- fixed argument of a varargs function.
-            // The argument location depends on the size of the variable
-            // arguments (...). Inspecting the VARARGS_HANDLE indicates the
-            // location of the first arg. This argument can then be accessed
-            // relative to the position of the first arg
+                    struct
+                    {
+                        RegNum      vlrsReg;
+                        struct
+                        {
+                            RegNum      vlrssBaseReg;
+                            signed      vlrssOffset;
+                        }           vlrsStk;
+                    } vlRegStk;
 
-            struct
-            {
-                unsigned        vlfvOffset;
-            } vlFixedVarArg;
+                    // VLT_STK_REG -- Partly enregistered TYP_LONG
+                    // eg { LowerDWord=[ESP+0x8] UpperDWord=EAX }
 
-            // VLT_MEMORY
+                    struct
+                    {
+                        struct
+                        {
+                            RegNum      vlsrsBaseReg;
+                            signed      vlsrsOffset;
+                        }           vlsrStk;
+                        RegNum      vlsrReg;
+                    } vlStkReg;
 
-            struct
-            {
-                void        *rpValue; // pointer to the in-process
-                // location of the value.
-            } vlMemory;
-        };*/
+                    // VLT_STK2 -- Any 64 bit value which is on the stack,
+                    // in 2 successsive DWords.
+                    // eg 2 DWords at [ESP+0x10]
+
+                    struct
+                    {
+                        RegNum      vls2BaseReg;
+                        signed      vls2Offset;
+                    } vlStk2;
+
+                    // VLT_FPSTK -- enregisterd TYP_DOUBLE (on the FP stack)
+                    // eg. ST(3). Actually it is ST("FPstkHeigth - vpFpStk")
+
+                    struct
+                    {
+                        unsigned        vlfReg;
+                    } vlFPstk;
+
+                    // VLT_FIXED_VA -- fixed argument of a varargs function.
+                    // The argument location depends on the size of the variable
+                    // arguments (...). Inspecting the VARARGS_HANDLE indicates the
+                    // location of the first arg. This argument can then be accessed
+                    // relative to the position of the first arg
+
+                    struct
+                    {
+                        unsigned        vlfvOffset;
+                    } vlFixedVarArg;
+
+                    // VLT_MEMORY
+
+                    struct
+                    {
+                        void        *rpValue; // pointer to the in-process
+                        // location of the value.
+                    } vlMemory;
+                };
+            };
+        */
     };
 
 
@@ -1304,57 +1383,106 @@ namespace Internal.JitInterface
 
         // token comes from CEE_CONSTRAINED
         CORINFO_TOKENKIND_Constrained = 0x100 | CORINFO_TOKENKIND_Class,
+
+        // token comes from CEE_NEWOBJ
+        CORINFO_TOKENKIND_NewObj = 0x200 | CORINFO_TOKENKIND_Method,
     };
 
     // These are error codes returned by CompileMethod
     public enum CorJitResult
-    {/*
+    {
         // Note that I dont use FACILITY_NULL for the facility number,
         // we may want to get a 'real' facility number
-        CORJIT_OK = NO_ERROR,
-        CORJIT_BADCODE = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 1),
-        CORJIT_OUTOFMEM = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 2),
-        CORJIT_INTERNALERROR = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 3),
-        CORJIT_SKIPPED = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 4),
-        CORJIT_RECOVERABLEERROR = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 5),
-        CORJIT_SKIPMDIL = MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 6)*/
+        CORJIT_OK = 0 /*NO_ERROR*/,
+        CORJIT_BADCODE = unchecked((int)0x80000001)/*MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 1)*/,
+        CORJIT_OUTOFMEM = unchecked((int)0x80000002)/*MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 2)*/,
+        CORJIT_INTERNALERROR = unchecked((int)0x80000003)/*MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 3)*/,
+        CORJIT_SKIPPED = unchecked((int)0x80000004)/*MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 4)*/,
+        CORJIT_RECOVERABLEERROR = unchecked((int)0x80000005)/*MAKE_HRESULT(SEVERITY_ERROR, FACILITY_NULL, 5)*/
     };
 
-    [Flags]
     public enum CorJitFlag : uint
     {
-        CORJIT_FLG_SPEED_OPT           = 0x00000001,
-        CORJIT_FLG_SIZE_OPT            = 0x00000002,
-        CORJIT_FLG_DEBUG_CODE          = 0x00000004, // generate "debuggable" code (no code-mangling optimizations)
-        CORJIT_FLG_DEBUG_EnC           = 0x00000008, // We are in Edit-n-Continue mode
-        CORJIT_FLG_DEBUG_INFO          = 0x00000010, // generate line and local-var info
-        CORJIT_FLG_MIN_OPT             = 0x00000020, // disable all jit optimizations (not necesarily debuggable code)
-        CORJIT_FLG_GCPOLL_CALLS        = 0x00000040, // Emit calls to JIT_POLLGC for thread suspension.
-        CORJIT_FLG_MCJIT_BACKGROUND    = 0x00000080, // Calling from multicore JIT background thread, do not call JitComplete
+        CORJIT_FLAG_CALL_GETJITFLAGS = 0xffffffff, // Indicates that the JIT should retrieve flags in the form of a
+                                                   // pointer to a CORJIT_FLAGS value via ICorJitInfo::getJitFlags().
+        CORJIT_FLAG_SPEED_OPT = 0,
+        CORJIT_FLAG_SIZE_OPT = 1,
+        CORJIT_FLAG_DEBUG_CODE = 2, // generate "debuggable" code (no code-mangling optimizations)
+        CORJIT_FLAG_DEBUG_EnC = 3, // We are in Edit-n-Continue mode
+        CORJIT_FLAG_DEBUG_INFO = 4, // generate line and local-var info
+        CORJIT_FLAG_MIN_OPT = 5, // disable all jit optimizations (not necesarily debuggable code)
+        CORJIT_FLAG_GCPOLL_CALLS = 6, // Emit calls to JIT_POLLGC for thread suspension.
+        CORJIT_FLAG_MCJIT_BACKGROUND = 7, // Calling from multicore JIT background thread, do not call JitComplete
+        CORJIT_FLAG_UNUSED1 = 8,
+        CORJIT_FLAG_UNUSED2 = 9,
+        CORJIT_FLAG_UNUSED3 = 10,
+        CORJIT_FLAG_UNUSED4 = 11,
+        CORJIT_FLAG_UNUSED5 = 12,
+        CORJIT_FLAG_USE_SSE3_4 = 13,
+        CORJIT_FLAG_USE_AVX = 14,
+        CORJIT_FLAG_USE_AVX2 = 15,
+        CORJIT_FLAG_USE_AVX_512 = 16,
+        CORJIT_FLAG_FEATURE_SIMD = 17,
+        CORJIT_FLAG_MAKEFINALCODE = 18, // Use the final code generator, i.e., not the interpreter.
+        CORJIT_FLAG_READYTORUN = 19, // Use version-resilient code generation
+        CORJIT_FLAG_PROF_ENTERLEAVE = 20, // Instrument prologues/epilogues
+        CORJIT_FLAG_PROF_REJIT_NOPS = 21, // Insert NOPs to ensure code is re-jitable
+        CORJIT_FLAG_PROF_NO_PINVOKE_INLINE = 22, // Disables PInvoke inlining
+        CORJIT_FLAG_SKIP_VERIFICATION = 23, // (lazy) skip verification - determined without doing a full resolve. See comment below
+        CORJIT_FLAG_PREJIT = 24, // jit or prejit is the execution engine.
+        CORJIT_FLAG_RELOC = 25, // Generate relocatable code
+        CORJIT_FLAG_IMPORT_ONLY = 26, // Only import the function
+        CORJIT_FLAG_IL_STUB = 27, // method is an IL stub
+        CORJIT_FLAG_PROCSPLIT = 28, // JIT should separate code into hot and cold sections
+        CORJIT_FLAG_BBINSTR = 29, // Collect basic block profile information
+        CORJIT_FLAG_BBOPT = 30, // Optimize method based on profile information
+        CORJIT_FLAG_FRAMED = 31, // All methods have an EBP frame
+        CORJIT_FLAG_ALIGN_LOOPS = 32, // add NOPs before loops to align them at 16 byte boundaries
+        CORJIT_FLAG_PUBLISH_SECRET_PARAM = 33, // JIT must place stub secret param into local 0.  (used by IL stubs)
+        CORJIT_FLAG_GCPOLL_INLINE = 34, // JIT must inline calls to GCPoll when possible
+        CORJIT_FLAG_SAMPLING_JIT_BACKGROUND = 35, // JIT is being invoked as a result of stack sampling for hot methods in the background
+        CORJIT_FLAG_USE_PINVOKE_HELPERS = 36, // The JIT should use the PINVOKE_{BEGIN,END} helpers instead of emitting inline transitions
+        CORJIT_FLAG_REVERSE_PINVOKE = 37, // The JIT should insert REVERSE_PINVOKE_{ENTER,EXIT} helpers into method prolog/epilog
+        CORJIT_FLAG_DESKTOP_QUIRKS = 38, // The JIT should generate desktop-quirk-compatible code
+    }
 
-        CORJIT_FLG_USE_SSE3_4          = 0x00000200,
-        CORJIT_FLG_USE_AVX             = 0x00000400,
-        CORJIT_FLG_USE_AVX2            = 0x00000800,
-        CORJIT_FLG_USE_AVX_512         = 0x00001000,
-        CORJIT_FLG_FEATURE_SIMD        = 0x00002000,
+    public struct CORJIT_FLAGS
+    {
+        private UInt64 _corJitFlags;
+        
+        public void Reset()
+        {
+            _corJitFlags = 0;
+        }
 
-        CORJIT_FLG_READYTORUN          = 0x00010000, // Use version-resilient code generation
+        public void Set(CorJitFlag flag)
+        {
+            _corJitFlags |= 1UL << (int)flag;
+        }
 
-        CORJIT_FLG_PROF_ENTERLEAVE     = 0x00020000, // Instrument prologues/epilogues
-        CORJIT_FLG_PROF_REJIT_NOPS     = 0x00040000, // Insert NOPs to ensure code is re-jitable
-        CORJIT_FLG_PROF_NO_PINVOKE_INLINE
-                                       = 0x00080000, // Disables PInvoke inlining
-        CORJIT_FLG_SKIP_VERIFICATION   = 0x00100000, // (lazy) skip verification - determined without doing a full resolve. See comment below
-        CORJIT_FLG_PREJIT              = 0x00200000, // jit or prejit is the execution engine.
-        CORJIT_FLG_RELOC               = 0x00400000, // Generate relocatable code
-        CORJIT_FLG_IMPORT_ONLY         = 0x00800000, // Only import the function
-        CORJIT_FLG_IL_STUB             = 0x01000000, // method is an IL stub
-        CORJIT_FLG_PROCSPLIT           = 0x02000000, // JIT should separate code into hot and cold sections
-        CORJIT_FLG_BBINSTR             = 0x04000000, // Collect basic block profile information
-        CORJIT_FLG_BBOPT               = 0x08000000, // Optimize method based on profile information
-        CORJIT_FLG_FRAMED              = 0x10000000, // All methods have an EBP frame
-        CORJIT_FLG_ALIGN_LOOPS         = 0x20000000, // add NOPs before loops to align them at 16 byte boundaries
-        CORJIT_FLG_PUBLISH_SECRET_PARAM= 0x40000000, // JIT must place stub secret param into local 0.  (used by IL stubs)
-        CORJIT_FLG_GCPOLL_INLINE       = 0x80000000, // JIT must inline calls to GCPoll when possible
-    };
+        public void Clear(CorJitFlag flag)
+        {
+            _corJitFlags &= ~(1UL << (int)flag);
+        }
+
+        public bool IsSet(CorJitFlag flag)
+        {
+            return (_corJitFlags & (1UL << (int)flag)) != 0;
+        }
+
+        public void Add(ref CORJIT_FLAGS other)
+        {
+            _corJitFlags |= other._corJitFlags;
+        }
+
+        public void Remove(ref CORJIT_FLAGS other)
+        {
+            _corJitFlags &= ~other._corJitFlags;
+        }
+
+        public bool IsEmpty()
+        {
+            return _corJitFlags == 0;
+        }
+    }
 }

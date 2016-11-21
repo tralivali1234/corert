@@ -1,17 +1,18 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
-using System;
+using Debug = System.Diagnostics.Debug;
 
 namespace System.Collections.Generic
 {
-    //
-    // Helper class for building lists that avoids unnecessary allocation
-    //
+    /// <summary>
+    /// Helper class for building lists that avoids unnecessary allocation
+    /// </summary>
     internal struct ArrayBuilder<T>
     {
-        T[] _items;
-        int _count;
+        private T[] _items;
+        private int _count;
 
         public T[] ToArray()
         {
@@ -29,6 +30,31 @@ namespace System.Collections.Generic
             _items[_count++] = item;
         }
 
+        public void Append(T[] newItems)
+        {
+            if (newItems.Length == 0)
+                return;
+            EnsureCapacity(_count + newItems.Length);
+            Array.Copy(newItems, 0, _items, _count, newItems.Length);
+            _count += newItems.Length;
+        }
+
+        public void ZeroExtend(int numItems)
+        {
+            Debug.Assert(numItems >= 0);
+            EnsureCapacity(_count + numItems);
+            _count += numItems;
+        }
+
+        public void EnsureCapacity(int requestedCapacity)
+        {
+            if (requestedCapacity > ((_items != null) ? _items.Length : 0))
+            {
+                int newCount = Math.Max(2 * _count + 1, requestedCapacity);
+                Array.Resize(ref _items, newCount);
+            }
+        }
+
         public int Count
         {
             get
@@ -43,6 +69,23 @@ namespace System.Collections.Generic
             {
                 return _items[index];
             }
+            set
+            {
+                _items[index] = value;
+            }
+        }
+
+        public bool Contains(T t)
+        {
+            for (int i = 0; i < _count; i++)
+            {
+                if (_items[i].Equals(t))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

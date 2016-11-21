@@ -1,22 +1,17 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-#include "rhcommon.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "assert.h"
+#include "rhassert.h"
 #include "rhbinder.h"
 #include "eetype.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#endif
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+
+#include "CommonMacros.inl"
 
 #pragma warning(disable:4127) // C4127: conditional expression is constant
 
@@ -49,13 +44,12 @@ bool EEType::Validate(bool assertOnFail /* default: true */)
     case CanonicalEEType:
     {
         // If the parent type is NULL this had better look like Object.
-        if (m_RelatedType.m_pBaseType == NULL)
+        if (!IsInterface() && (m_RelatedType.m_pBaseType == NULL))
         {
             if (IsRelatedTypeViaIAT() ||
                 get_IsValueType() ||
                 HasFinalizer() ||
                 HasReferenceFields() ||
-                IsRuntimeAllocated() ||
                 HasGenericVariance())
             {
                 REPORT_FAILURE();
@@ -77,8 +71,7 @@ bool EEType::Validate(bool assertOnFail /* default: true */)
         case 0:
         {
             // Cloned generic type.
-            if (!IsRelatedTypeViaIAT() ||
-                IsRuntimeAllocated())
+            if (!IsRelatedTypeViaIAT())
             {
                 REPORT_FAILURE();
             }
@@ -88,11 +81,9 @@ bool EEType::Validate(bool assertOnFail /* default: true */)
         case 2:
         {
             // Cloned string.
-            if (!IsRelatedTypeViaIAT() ||
-                get_IsValueType() ||
+            if (get_IsValueType() ||
                 HasFinalizer() ||
                 HasReferenceFields() ||
-                IsRuntimeAllocated() ||
                 HasGenericVariance())
             {
                 REPORT_FAILURE();
@@ -122,7 +113,6 @@ bool EEType::Validate(bool assertOnFail /* default: true */)
 
         if (get_IsValueType() ||
             HasFinalizer() ||
-            IsRuntimeAllocated() ||
             HasGenericVariance())
         {
             REPORT_FAILURE();
@@ -146,4 +136,32 @@ bool EEType::Validate(bool assertOnFail /* default: true */)
 #undef REPORT_FAILURE
 
     return true;
+}
+
+//-----------------------------------------------------------------------------------------------------------
+EEType::Kinds EEType::get_Kind()
+{
+	return (Kinds)(m_usFlags & (UInt16)EETypeKindMask);
+}
+
+//-----------------------------------------------------------------------------------------------------------
+EEType * EEType::get_CanonicalEEType()
+{
+	// cloned EETypes must always refer to types in other modules
+	ASSERT(IsCloned());
+    if (IsRelatedTypeViaIAT())
+        return *PTR_PTR_EEType(reinterpret_cast<TADDR>(m_RelatedType.m_ppCanonicalTypeViaIAT));
+    else
+        return PTR_EEType(reinterpret_cast<TADDR>(m_RelatedType.m_pCanonicalType)); // in the R2R case, the link is direct rather than indirect via the IAT
+}
+
+//-----------------------------------------------------------------------------------------------------------
+EEType * EEType::get_RelatedParameterType()
+{
+	ASSERT(IsParameterizedType());
+
+	if (IsRelatedTypeViaIAT())
+		return *PTR_PTR_EEType(reinterpret_cast<TADDR>(m_RelatedType.m_ppRelatedParameterTypeViaIAT));
+	else
+		return PTR_EEType(reinterpret_cast<TADDR>(m_RelatedType.m_pRelatedParameterType));
 }

@@ -1,18 +1,20 @@
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 using System.Diagnostics;
 using System.Text;
+using Internal.NativeFormat;
 
 namespace Internal.TypeSystem
 {
-    public sealed class InstantiatedMethod : MethodDesc
+    public sealed partial class InstantiatedMethod : MethodDesc
     {
-        MethodDesc _methodDef;
-        Instantiation _instantiation;
+        private MethodDesc _methodDef;
+        private Instantiation _instantiation;
 
-        MethodSignature _signature;
+        private MethodSignature _signature;
 
         internal InstantiatedMethod(MethodDesc methodDef, Instantiation instantiation)
         {
@@ -21,6 +23,20 @@ namespace Internal.TypeSystem
 
             Debug.Assert(instantiation.Length > 0);
             _instantiation = instantiation;
+        }
+
+        // This constructor is a performance optimization - it allows supplying the hash code if it has already
+        // been computed prior to the allocation of this type. The supplied hash code still has to match the
+        // hash code this type would compute on it's own (and we assert to enforce that).
+        internal InstantiatedMethod(MethodDesc methodDef, Instantiation instantiation, int hashcode)
+            : this(methodDef, instantiation)
+        {
+            SetHashCode(hashcode);
+        }
+
+        protected override int ComputeHashCode()
+        {
+            return TypeHashingAlgorithms.ComputeMethodHashCode(OwningType.GetHashCode(), Instantiation.ComputeGenericInstanceHashCode(TypeHashingAlgorithms.ComputeNameHashCode(Name)));
         }
 
         public override TypeSystemContext Context
@@ -39,7 +55,7 @@ namespace Internal.TypeSystem
             }
         }
 
-        TypeDesc Instantiate(TypeDesc type)
+        private TypeDesc Instantiate(TypeDesc type)
         {
             return type.InstantiateSignature(new Instantiation(), _instantiation);
         }
@@ -72,6 +88,43 @@ namespace Internal.TypeSystem
             }
         }
 
+        public override bool IsVirtual
+        {
+            get
+            {
+                return _methodDef.IsVirtual;
+            }
+        }
+
+        public override bool IsNewSlot
+        {
+            get
+            {
+                return _methodDef.IsNewSlot;
+            }
+        }
+
+        public override bool IsAbstract
+        {
+            get
+            {
+                return _methodDef.IsAbstract;
+            }
+        }
+
+        public override bool IsFinal
+        {
+            get
+            {
+                return _methodDef.IsFinal;
+            }
+        }
+
+        public override bool HasCustomAttribute(string attributeNamespace, string attributeName)
+        {
+            return _methodDef.HasCustomAttribute(attributeNamespace, attributeName);
+        }
+
         public override MethodDesc GetMethodDefinition()
         {
             return _methodDef;
@@ -94,8 +147,7 @@ namespace Internal.TypeSystem
         {
             var sb = new StringBuilder(_methodDef.ToString());
             sb.Append('<');
-            for (int i = 0; i < _instantiation.Length; i++)
-                sb.Append(_instantiation[i].ToString());
+            sb.Append(_instantiation.ToString());
             sb.Append('>');
             return sb.ToString();
         }

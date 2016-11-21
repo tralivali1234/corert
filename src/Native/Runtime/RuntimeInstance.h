@@ -1,22 +1,17 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 class ThreadStore;
 typedef DPTR(ThreadStore) PTR_ThreadStore;
 class Module;
 typedef DPTR(Module) PTR_Module;
 class ICodeManager;
-class VirtualCallStubManager;
-struct GenericInstanceDesc;
-typedef SPTR(GenericInstanceDesc) PTR_GenericInstanceDesc;
+struct StaticGcDesc;
+typedef SPTR(StaticGcDesc) PTR_StaticGcDesc;
 struct ModuleHeader;
 enum GenericVarianceType : UInt8;
-struct UnifiedGenericInstance;
-class GenericTypeHashTable;
-typedef DPTR(GenericTypeHashTable) PTR_GenericTypeHashTable;
-struct StaticGcDesc;
-struct SimpleModuleHeader;
+struct GenericUnificationDesc;
+class GenericUnificationHashtable;
 
 class RuntimeInstance
 {
@@ -46,14 +41,9 @@ class RuntimeInstance
     CodeManagerList             m_CodeManagerList;
 #endif
 
-#ifdef FEATURE_VSD
-    VirtualCallStubManager *    m_pVSDManager;
-#endif
-
     // Indicates whether the runtime is in standalone exe mode where the only Redhawk module that will be
-    // loaded into the process (besides the runtime's own module) is the exe itself. The most important aspect
-    // of this is that generic types don't need to be unified. This flag will be correctly initialized once
-    // the exe module has loaded.
+    // loaded into the process (besides the runtime's own module) is the exe itself. This flag will be 
+    // correctly initialized once the exe module has loaded.
     bool                        m_fStandaloneExeMode;
 
     // If m_fStandaloneExeMode is set this contains a pointer to the exe module. Otherwise it's null.
@@ -67,34 +57,57 @@ class RuntimeInstance
     bool                        m_fProfileThreadCreated;
 #endif
 
-    // Generic type unification. Used only if we're not in single standalone exe mode.
-    UnifiedGenericInstance **   m_genericInstHashtab;
-    UnifiedGenericInstance **   m_genericInstHashtabUpdates;
-    UInt32                      m_genericInstHashtabCount;
-    UInt32                      m_genericInstHashtabEntries;
-    CrstStatic                  m_genericInstHashtabLock;
-#ifdef _DEBUG
-    bool                        m_genericInstHashUpdateInProgress;
-#endif
+    // describes static data areas containing GC pointers
+    // for dynamically loaded types or unified generic instances
+    struct StaticGCRefsDesc
+    {
+        PTR_StaticGcDesc        m_pStaticGcInfo;
+        PTR_UInt8               m_pbStaticData;
+    };
 
-    // List of generic instances that have GC references to report. This list is updated under the hash table
-    // lock above and enumerated without lock during garbage collections (when updates cannot occur). This
-    // list is only used in non-standalone exe mode, i.e. when we're unifying generic types. In standalone
-    // mode we report the GenericInstanceDescs directly from the module itself.
-    PTR_GenericInstanceDesc     m_genericInstReportList;
+    // describes a chunk of such descriptors to improve locality
+    struct  StaticGCRefsDescChunk
+    {
+        static const size_t     MAX_DESC_COUNT = 1000;
+        StaticGCRefsDescChunk  *m_pNextChunk;
+        UInt32                  m_uiDescCount;
+        StaticGCRefsDesc        m_rgDesc[MAX_DESC_COUNT];
 
-    ReaderWriterLock            m_GenericHashTableLock;
+        StaticGCRefsDescChunk() : m_uiDescCount(0) {}
+    };
 
-    // This is used (in standalone mode only) to build an on-demand hash tables of all generic instantiations
-    PTR_GenericTypeHashTable            m_pGenericTypeHashTable;
+    StaticGCRefsDescChunk      *m_pStaticGCRefsDescChunkList;
+
+    // describes thread static data areas containing GC pointers
+    // for dynamically loaded types or unified generic instances
+    struct ThreadStaticGCRefsDesc
+    {
+        PTR_StaticGcDesc        m_pThreadStaticGcInfo;
+        UInt32                  m_uiTlsIndex;
+        UInt32                  m_uiFieldStartOffset;
+    };
+
+    // describes a chunk of such descriptors to improve locality
+    struct ThreadStaticGCRefsDescChunk
+    {
+        static const size_t     MAX_DESC_COUNT = 100;
+        ThreadStaticGCRefsDescChunk *m_pNextChunk;
+        UInt32                  m_uiDescCount;
+        ThreadStaticGCRefsDesc  m_rgDesc[MAX_DESC_COUNT];
+
+        ThreadStaticGCRefsDescChunk() : m_uiDescCount(0) {}
+    };
+
+    ThreadStaticGCRefsDescChunk *m_pThreadStaticGCRefsDescChunkList;
+
+    // Lock protecting above lists
+    ReaderWriterLock            m_StaticGCRefLock;
+
+    GenericUnificationHashtable *m_pGenericUnificationHashtable;
 
     bool                        m_conservativeStackReportingEnabled;
 
     RuntimeInstance();
-
-#ifdef FEATURE_VSD
-    static bool CreateVSD(VirtualCallStubManager ** ppVSD);
-#endif
 
     SList<Module>* GetModuleList();
 
@@ -116,7 +129,6 @@ public:
     HANDLE          GetPalInstance();
 
     bool RegisterModule(ModuleHeader *pModuleHeader);
-    bool RegisterSimpleModule(SimpleModuleHeader *pModuleHeader);
     void UnregisterModule(Module *pModule);
     Module * FindModuleByAddress(PTR_VOID pvAddress);
     Module * FindModuleByCodeAddress(PTR_VOID ControlPC);
@@ -142,53 +154,32 @@ public:
     static  RuntimeInstance *   Create(HANDLE hPalInstance);
     void Destroy();
 
-    void EnumGenericStaticGCRefs(PTR_GenericInstanceDesc pInst, void * pfnCallback, void * pvCallbackData, Module *pModule);
+    void EnumStaticGCRefDescs(void * pfnCallback, void * pvCallbackData);
+    void EnumThreadStaticGCRefDescs(void * pfnCallback, void * pvCallbackData);
     void EnumAllStaticGCRefs(void * pfnCallback, void * pvCallbackData);
-
-#ifdef FEATURE_VSD
-    VirtualCallStubManager * GetVSDManager() { return m_pVSDManager; }
-#endif
 
     bool ShouldHijackCallsiteForGcStress(UIntNative CallsiteIP);
     bool ShouldHijackLoopForGcStress(UIntNative CallsiteIP);
 
-    bool StartGenericUnification(UInt32 cInstances);
-    UnifiedGenericInstance *UnifyGenericInstance(GenericInstanceDesc *genericInstance, UInt32 uiLocalTlsIndex);
-    void EndGenericUnification();
-
-    void ReleaseGenericInstance(GenericInstanceDesc * pInst);
-
     void EnableGcPollStress();
     void UnsychronizedResetHijackedLoops();
 
-    // Given the EEType* for an instantiated generic type retrieve the GenericInstanceDesc associated with
-    // that type. This is legal only for types that are guaranteed to have this metadata at runtime; generic
-    // types which have variance over one or more of their type parameters and generic interfaces on array).
-    GenericInstanceDesc * LookupGenericInstance(EEType * pEEType);
+    bool AddDynamicGcStatics(UInt8 *pGcStaticData, StaticGcDesc *pGcStaticsDesc);
 
-    // Given the EEType* for an instantiated generic type retrieve instantiation information (generic type
-    // definition EEType, arity, type arguments and variance info for each type parameter). Has the same
-    // limitations on usage as LookupGenericInstance above.
-    EEType * GetGenericInstantiation(EEType *               pEEType,
-                                     UInt32 *               pArity,
-                                     EEType ***             ppInstantiation,
-                                     GenericVarianceType ** ppVarianceInfo);
+    bool AddDynamicThreadStaticGcData(UInt32 uiTlsIndex, UInt32 uiThreadStaticOffset, StaticGcDesc *pGcStaticsDesc);
 
-    bool SetGenericInstantiation(EEType *               pEEType,
-                                 EEType *               pEETypeDef,
-                                 UInt32                 arity,
-                                 EEType **              pInstantiation);
+    bool CreateGenericAndStaticInfo(EEType *             pEEType,
+                                    EEType *             pTemplateType,
+                                    UInt32               arity,
+                                    UInt32               nonGcStaticDataSize,
+                                    UInt32               nonGCStaticDataOffset,
+                                    UInt32               gcStaticDataSize,
+                                    UInt32               threadStaticOffset,
+                                    StaticGcDesc *       pGcStaticsDesc,
+                                    StaticGcDesc *       pThreadStaticsDesc,
+                                    UInt32*              pGenericVarianceFlags);
 
-    bool CreateGenericInstanceDesc(EEType *             pEEType,
-                                   EEType *             pTemplateType,
-                                   UInt32               arity,
-                                   UInt32               nonGcStaticDataSize,
-                                   UInt32               nonGCStaticDataOffset,
-                                   UInt32               gcStaticDataSize,
-                                   UInt32               threadStaticOffset,
-                                   StaticGcDesc *       pGcStaticsDesc,
-                                   StaticGcDesc *       pThreadStaticsDesc,
-                                   UInt32*              pGenericVarianceFlags);
+    bool UnifyGenerics(GenericUnificationDesc *descs, UInt32 descCount, void  **pIndirCells, UInt32 indirCellCount);
 
 #ifdef FEATURE_PROFILING
     void InitProfiling(ModuleHeader *pModuleHeader);

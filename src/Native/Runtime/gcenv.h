@@ -1,20 +1,63 @@
-//
-// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information. 
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 #define FEATURE_PREMORTEM_FINALIZATION
 
+#ifdef _MSC_VER
+#pragma warning( disable: 4189 )  // 'hp': local variable is initialized but not referenced -- common in GC
+#pragma warning( disable: 4127 )  // conditional expression is constant -- common in GC
+#endif
+
+#include "sal.h"
+#include "gcenv.structs.h"
+#include "gcenv.os.h"
+#include "gcenv.interlocked.h"
 #include "gcenv.base.h"
 
-#include "crst.h"
+#include "Crst.h"
 #include "event.h"
-#include "commontypes.h"
-#include "commonmacros.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "targetptrs.h"
+#include "TargetPtrs.h"
 #include "eetype.h"
-#include "objectlayout.h"
+#include "ObjectLayout.h"
+#include "rheventtrace.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "gcrhinterface.h"
+#include "gcenv.interlocked.inl"
 
+#include "stressLog.h"
+#ifdef FEATURE_ETW
+
+    #ifndef _INC_WINDOWS
+        typedef void* LPVOID;
+        typedef uint32_t UINT;
+        typedef void* PVOID;
+        typedef uint64_t ULONGLONG;
+        typedef uint32_t ULONG;
+        typedef int64_t LONGLONG;
+        typedef uint8_t BYTE;
+        typedef uint16_t UINT16;
+    #endif // _INC_WINDOWS
+
+    #include "etwevents.h"
+    #include "eventtrace.h"
+
+#else // FEATURE_ETW
+
+    #include "etmdummy.h"
+    #define ETW_EVENT_ENABLED(e,f) false
+
+#endif // FEATURE_ETW
+
+#define MAX_LONGPATH 1024
+#define LOG(x)
+
+#ifndef YieldProcessor
+#define YieldProcessor PalYieldProcessor
+#endif
 
 // Adapter for GC's view of Array
 class ArrayBase : Array
@@ -25,7 +68,7 @@ public:
         return m_Length;
     }
 
-    static SIZE_T GetOffsetOfNumComponents()
+    static size_t GetOffsetOfNumComponents()
     {
         return offsetof(ArrayBase, m_Length);
     }
@@ -62,12 +105,14 @@ public:
     UInt32 GetRequiredAlignment() const { return sizeof(void*); }
 #endif // FEATURE_BARTOK
 #endif // FEATURE_STRUCTALIGN
+    bool RequiresAlign8() { return ((EEType*)this)->RequiresAlign8(); }
+    bool IsValueType() { return ((EEType*)this)->get_IsValueType(); }
     UInt32_BOOL SanityCheck() { return ((EEType*)this)->Validate(); }
 };
 
 class EEConfig
 {
-    BYTE m_gcStressMode;
+    UInt8 m_gcStressMode;
 
 public:
     enum HeapVerifyFlags {
@@ -115,15 +160,21 @@ public:
     bool    IsHeapVerifyEnabled()                 { return GetHeapVerifyLevel() != 0; }
 
     GCStressFlags GetGCStressLevel()        const { return (GCStressFlags) m_gcStressMode; }
-    void    SetGCStressLevel(int val)             { m_gcStressMode = (BYTE) val;}
+    void    SetGCStressLevel(int val)             { m_gcStressMode = (UInt8) val;}
     bool    IsGCStressMix()                 const { return false; }
 
     int     GetGCtraceStart()               const { return 0; }
-    int     GetGCtraceEnd  ()               const { return 0; }//1000000000; }
+    int     GetGCtraceEnd  ()               const { return 1000000000; }
     int     GetGCtraceFac  ()               const { return 0; }
     int     GetGCprnLvl    ()               const { return 0; }
     bool    IsGCBreakOnOOMEnabled()         const { return false; }
+#ifdef USE_PORTABLE_HELPERS
+    // CORERT-TODO: remove this
+    //              https://github.com/dotnet/corert/issues/2033
+    int     GetGCgen0size  ()               const { return 100 * 1024 * 1024; }
+#else
     int     GetGCgen0size  ()               const { return 0; }
+#endif
     void    SetGCgen0size  (int iSize)            { UNREFERENCED_PARAMETER(iSize); }
     int     GetSegmentSize ()               const { return 0; }
     void    SetSegmentSize (int iSize)            { UNREFERENCED_PARAMETER(iSize); }
@@ -142,6 +193,9 @@ public:
     // conservatively report an interior reference inside a GC free object or in the non-valid tail of the
     // heap).
     bool    GetGCConservative()             const { return true; }
+
+    bool    GetGCNoAffinitize()             const { return false; }
+    int     GetGCHeapCount()                const { return 0; }
 };
 extern EEConfig* g_pConfig;
 
@@ -154,7 +208,7 @@ class SyncBlockCache
 {
 public:
     static SyncBlockCache *GetSyncBlockCache() { return &g_sSyncBlockCache; }
-    void GCWeakPtrScan(void *pCallback, LPARAM pCtx, int dummy)
+    void GCWeakPtrScan(void *pCallback, uintptr_t pCtx, int dummy)
     {
         UNREFERENCED_PARAMETER(pCallback);
         UNREFERENCED_PARAMETER(pCtx);
@@ -166,40 +220,29 @@ public:
         UNREFERENCED_PARAMETER(max_gen);
     }
     void VerifySyncTableEntry() {}
+
+    DWORD GetActiveCount()
+    {
+        return 0;
+    }
 };
 
 #endif // VERIFY_HEAP
 
-//
-// -----------------------------------------------------------------------------------------------------------
-//
-// Support for shutdown finalization, which is off by default but can be enabled by the class library.
-//
+EXTERN_C UInt32 _tls_index;
+inline UInt16 GetClrInstanceId()
+{
+    return (UInt16)_tls_index;
+}
 
-// If true runtime shutdown will attempt to finalize all finalizable objects (even those still rooted).
-extern bool g_fPerformShutdownFinalization;
+class IGCHeap;
+typedef DPTR(IGCHeap) PTR_IGCHeap;
+typedef DPTR(uint32_t) PTR_uint32_t;
 
-// Time to wait (in milliseconds) for the above finalization to complete before giving up and proceeding with
-// shutdown. Can specify INFINITE for no timeout. 
-extern UInt32 g_uiShutdownFinalizationTimeout;
+enum CLRDataEnumMemoryFlags : int;
 
-// Flag set to true once we've begun shutdown (and before shutdown finalization begins). This is exported to
-// the class library so that managed code can tell when it is safe to access other objects from finalizers.
-extern bool g_fShutdownHasStarted;
-
-
-#ifdef DACCESS_COMPILE
-
-// The DAC uses DebuggerEnumGcRefContext in place of a GCCONTEXT when doing reference
-// enumeration. The GC passes through additional data in the ScanContext which the debugger
-// neither has nor needs. While we could refactor the GC code to make an interface
-// with less coupling, that might affect perf or make integration messier. Instead
-// we use some typedefs so DAC and runtime can get strong yet distinct types.
-
-typedef Thread::ScanCallbackData EnumGcRefScanContext;
-typedef void EnumGcRefCallbackFunc(PTR_PTR_Object, EnumGcRefScanContext* callbackData, DWORD flags);
-
-#else
-typedef promote_func EnumGcRefCallbackFunc;
-typedef ScanContext  EnumGcRefScanContext;
-#endif
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+// Note this is not updated in a thread safe way so the value may not be accurate. We get
+// it accurately in full GCs if the handle count is requested.
+extern DWORD g_dwHandles;
+#endif // ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE

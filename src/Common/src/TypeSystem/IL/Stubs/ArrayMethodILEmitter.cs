@@ -1,164 +1,202 @@
-﻿// Copyright (c) Microsoft. All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 using System;
 
 using Internal.TypeSystem;
-using Internal.TypeSystem.Ecma;
 
-using Internal.IL;
+using Debug = System.Diagnostics.Debug;
 
 namespace Internal.IL.Stubs
 {
-    internal class ArrayMethodILEmitter : ILEmitter
+    internal struct ArrayMethodILEmitter
     {
-        ArrayMethod _method;
-        TypeDesc _elementType;
-        TypeDesc _backingType;
-        int _rank;
+        private ArrayMethod _method;
+        private TypeDesc _elementType;
+        private int _rank;
 
-        public ArrayMethodILEmitter(ArrayMethod method)
+        private ILToken _helperFieldToken;
+        private ILEmitter _emitter;
+
+        private ArrayMethodILEmitter(ArrayMethod method)
         {
             _method = method;
 
             ArrayType arrayType = (ArrayType)method.OwningType;
             _rank = arrayType.Rank;
             _elementType = arrayType.ElementType;
+            _emitter = new ILEmitter();
 
-            var systemModule = ((EcmaType)method.Context.GetWellKnownType(WellKnownType.Object)).Module;
-
-            _backingType = systemModule.GetType("System", "MDArrayRank" + _rank.ToString() + "`1").MakeInstantiatedType(
-                    new Instantiation(new TypeDesc[] { _elementType })
-                );
+            // This helper field is needed to generate proper GC tracking. There is no direct way
+            // to create interior pointer. 
+            _helperFieldToken = _emitter.NewToken(_method.Context.GetWellKnownType(WellKnownType.Object).GetKnownField("m_pEEType"));
         }
 
-        public MethodIL EmitIL()
+        private void EmitLoadInteriorAddress(ILCodeStream codeStream, int offset)
+        {
+            codeStream.EmitLdArg(0); // this
+            codeStream.Emit(ILOpcode.ldflda, _helperFieldToken);
+            codeStream.EmitLdc(offset);
+            codeStream.Emit(ILOpcode.add);
+        }
+
+        private MethodIL EmitIL()
         {
             switch (_method.Kind)
             {
                 case ArrayMethodKind.Get:
-                    EmitILForGet();
-                    break;
                 case ArrayMethodKind.Set:
-                    EmitILForSet();
-                    break;
                 case ArrayMethodKind.Address:
-                    EmitILForAddress();
+                    EmitILForAccessor();
                     break;
+
+                case ArrayMethodKind.Ctor:
+                    // .ctor is implemented as a JIT helper and the JIT shouldn't be asking for the IL.
                 default:
-                    EmitILForCtor();
-                    break;
+                    // Asking for anything else is invalid.
+                    throw new InvalidOperationException();
             }
 
-            return Link();
+            return _emitter.Link(_method);
         }
 
-        void EmitComputeIndex(ILCodeStream codeStream)
+        public static MethodIL EmitIL(ArrayMethod arrayMethod)
         {
-            // Compute index into the backing array
-            for (int i = 1; i < _rank; i++)
+            return new ArrayMethodILEmitter(arrayMethod).EmitIL();
+        }
+
+        private void EmitILForAccessor()
+        {
+            Debug.Assert(_method.OwningType.IsMdArray);
+
+            var codeStream = _emitter.NewCodeStream();
+            var context = _method.Context;
+
+            var int32Type = context.GetWellKnownType(WellKnownType.Int32);
+
+            var totalLocalNum = _emitter.NewLocal(int32Type);
+            var lengthLocalNum = _emitter.NewLocal(int32Type);
+
+            int pointerSize = context.Target.PointerSize;
+
+            var rangeExceptionLabel = _emitter.NewCodeLabel();
+            ILCodeLabel typeMismatchExceptionLabel = null;
+
+            if (!_elementType.IsValueType)
             {
-                FieldDesc upperBoundField = _backingType.GetField("m_upperBound" + _rank);
-                codeStream.EmitLdArg(0);
-                codeStream.Emit(ILOpcode.ldfld, NewToken(upperBoundField));
-                for (int j = _rank - 1; j > i; j--)
+                // Type check
+                if (_method.Kind == ArrayMethodKind.Set)
                 {
-                    upperBoundField = _backingType.GetField("m_upperBound" + j);
+                    MethodDesc checkArrayStore =
+                        context.SystemModule.GetKnownType("System.Runtime", "RuntimeImports").GetKnownMethod("RhCheckArrayStore", null);
+
                     codeStream.EmitLdArg(0);
-                    codeStream.Emit(ILOpcode.ldfld, NewToken(upperBoundField));
-                    codeStream.Emit(ILOpcode.mul);
+                    codeStream.EmitLdArg(_rank + 1);
+
+                    codeStream.Emit(ILOpcode.call, _emitter.NewToken(checkArrayStore));
                 }
-
-                codeStream.EmitLdArg(i);
-                codeStream.Emit(ILOpcode.mul);
-
-                if (i != 1)
+                else if (_method.Kind == ArrayMethodKind.Address)
                 {
+                    TypeDesc objectType = context.GetWellKnownType(WellKnownType.Object);
+                    TypeDesc eetypePtrType = context.SystemModule.GetKnownType("System", "EETypePtr");
+
+                    MethodDesc eetypePtrOfMethod = eetypePtrType.GetKnownMethod("EETypePtrOf", null)
+                        .MakeInstantiatedMethod(_elementType);
+
+                    typeMismatchExceptionLabel = _emitter.NewCodeLabel();
+
+                    ILLocalVariable thisEEType = _emitter.NewLocal(eetypePtrType);
+
+                    // EETypePtr actualElementType = this.EETypePtr.ArrayElementType;
+                    codeStream.EmitLdArg(0);
+                    codeStream.Emit(ILOpcode.call, _emitter.NewToken(objectType.GetKnownMethod("get_EETypePtr", null)));
+                    codeStream.EmitStLoc(thisEEType);
+                    codeStream.EmitLdLoca(thisEEType);
+                    codeStream.Emit(ILOpcode.call,
+                        _emitter.NewToken(eetypePtrType.GetKnownMethod("get_ArrayElementType", null)));
+
+                    // EETypePtr expectedElementType = EETypePtr.EETypePtrOf<_elementType>();
+                    codeStream.Emit(ILOpcode.call, _emitter.NewToken(eetypePtrOfMethod));
+
+                    // if (expectedElementType != actualElementType)
+                    //     ThrowHelpers.ThrowArrayTypeMismatchException();
+                    codeStream.Emit(ILOpcode.call, _emitter.NewToken(eetypePtrType.GetKnownMethod("op_Equality", null)));
+                    codeStream.Emit(ILOpcode.brfalse, typeMismatchExceptionLabel);
+                }
+            }
+
+            for (int i = 0; i < _rank; i++)
+            {
+                // The first two fields are EEType pointer and total length. Lengths for each dimension follows.
+                int lengthOffset = (2 * pointerSize + i * int32Type.GetElementSize());
+
+                EmitLoadInteriorAddress(codeStream, lengthOffset);
+                codeStream.Emit(ILOpcode.ldind_i4);
+                codeStream.EmitStLoc(lengthLocalNum);
+
+                codeStream.EmitLdArg(i + 1);
+
+                // Compare with length
+                codeStream.Emit(ILOpcode.dup);
+                codeStream.EmitLdLoc(lengthLocalNum);
+                codeStream.Emit(ILOpcode.bge_un, rangeExceptionLabel);
+
+                // Add to the running total if we have one already
+                if (i > 0)
+                {
+                    codeStream.EmitLdLoc(totalLocalNum);
+                    codeStream.EmitLdLoc(lengthLocalNum);
+                    codeStream.Emit(ILOpcode.mul);
                     codeStream.Emit(ILOpcode.add);
                 }
+                codeStream.EmitStLoc(totalLocalNum);
             }
 
-            codeStream.EmitLdArg(_rank);
+            // Compute element offset
+            // TODO: This leaves unused space for lower bounds to match CoreCLR...
+            int firstElementOffset = (2 * pointerSize + 2 * _rank * int32Type.GetElementSize());
+            EmitLoadInteriorAddress(codeStream, firstElementOffset);
+
+            codeStream.EmitLdLoc(totalLocalNum);
+
+            int elementSize = _elementType.GetElementSize();
+            if (elementSize != 1)
+            {
+                codeStream.EmitLdc(elementSize);
+                codeStream.Emit(ILOpcode.mul);
+            }
             codeStream.Emit(ILOpcode.add);
-        }
 
-        void EmitILForCtor()
-        {
-            var codeStream = NewCodeStream();
-
-            // TODO: generate IL to check for negative bounds and throw OverflowException
-
-            codeStream.EmitLdArg(0);
-
-            // Compute size of the backing array
-            codeStream.EmitLdArg(1);
-            for (int i = 2; i <= _rank; i++)
+            switch (_method.Kind)
             {
-                codeStream.EmitLdArg(i);
-                codeStream.Emit(ILOpcode.mul_ovf);
-            }
+                case ArrayMethodKind.Get:
+                    codeStream.Emit(ILOpcode.ldobj, _emitter.NewToken(_elementType));
+                    break;
 
-            // Allocate backing array and store it in the private field
-            codeStream.Emit(ILOpcode.newarr, NewToken(_elementType));
-            FieldDesc backingArrayField = _backingType.GetField("m_array");
-            codeStream.Emit(ILOpcode.stfld, NewToken(backingArrayField));
+                case ArrayMethodKind.Set:
+                    codeStream.EmitLdArg(_rank + 1);
+                    codeStream.Emit(ILOpcode.stobj, _emitter.NewToken(_elementType));
+                    break;
 
-            // Store bounds
-            for (int i = 1; i <= _rank; i++)
-            {
-                FieldDesc upperBoundField = _backingType.GetField("m_upperBound" + i);
-
-                codeStream.EmitLdArg(0);
-                codeStream.EmitLdArg(i);
-                codeStream.Emit(ILOpcode.stfld, NewToken(upperBoundField));
+                case ArrayMethodKind.Address:
+                    break;
             }
 
             codeStream.Emit(ILOpcode.ret);
-        }
 
-        MethodIL EmitILForSet()
-        {
-            var codeStream = NewCodeStream();
+            codeStream.EmitLdc(0);
+            codeStream.EmitLabel(rangeExceptionLabel); // Assumes that there is one "int" pushed on the stack
+            codeStream.Emit(ILOpcode.pop);
 
-            // TODO: generate IL to check bounds
+            MethodDesc throwHelper = context.GetHelperEntryPoint("ThrowHelpers", "ThrowIndexOutOfRangeException");
+            codeStream.EmitCallThrowHelper(_emitter, throwHelper);
 
-            codeStream.EmitLdArg(0);
-            FieldDesc backingArrayField = _backingType.GetField("m_array");
-            codeStream.Emit(ILOpcode.ldfld, NewToken(backingArrayField));
-
-            EmitComputeIndex(codeStream);
-
-            // Store value at index
-            codeStream.EmitLdArg(_rank + 1);
-            codeStream.Emit(ILOpcode.stelem, NewToken(_elementType));
-
-            codeStream.Emit(ILOpcode.ret);
-
-            return Link();
-        }
-
-        void EmitILForGet()
-        {
-            var codeStream = NewCodeStream();
-
-            // TODO: generate IL to check bounds
-
-            codeStream.EmitLdArg(0);
-            FieldDesc backingArrayField = _backingType.GetField("m_array");
-            codeStream.Emit(ILOpcode.ldfld, NewToken(backingArrayField));
-
-            EmitComputeIndex(codeStream);
-
-            // Load value at index
-            codeStream.Emit(ILOpcode.ldelem, NewToken(_elementType));
-
-            codeStream.Emit(ILOpcode.ret);
-        }
-
-        void EmitILForAddress()
-        {
-            // TODO
-            throw new NotImplementedException();
+            if (typeMismatchExceptionLabel != null)
+            {
+                codeStream.EmitLabel(typeMismatchExceptionLabel);
+                codeStream.EmitCallThrowHelper(_emitter, context.GetHelperEntryPoint("ThrowHelpers", "ThrowArrayTypeMismatchException"));
+            }
         }
     }
 }

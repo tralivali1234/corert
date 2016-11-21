@@ -1,28 +1,21 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Implementations of functions dealing with object layout related types.
 //
-#include "rhcommon.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "assert.h"
-#include "redhawkwarnings.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "targetptrs.h"
+#include "rhassert.h"
+#include "RedhawkWarnings.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "TargetPtrs.h"
 #include "eetype.h"
-#include "objectlayout.h"
-#endif // !DACCESS_COMPILE
+#include "ObjectLayout.h"
 
 #ifndef DACCESS_COMPILE
 void Object::InitEEType(EEType * pEEType)

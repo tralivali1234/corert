@@ -1,37 +1,38 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // Callouts from the unmanaged portion of the runtime to C# helpers made during garbage collections. See
 // RestrictedCallouts.h for more detail.
 //
 
-#include "rhcommon.h"
-#include "commontypes.h"
-#include "commonmacros.h"
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "holder.h"
 #include "gcrhinterface.h"
+#include "shash.h"
+#include "RWLock.h"
 #include "module.h"
 #include "rhbinder.h"
-#include "crst.h"
-#include "rwlock.h"
-#include "runtimeinstance.h"
+#include "Crst.h"
+#include "RuntimeInstance.h"
 #include "eetype.h"
-#include "objectlayout.h"
+#include "ObjectLayout.h"
 #include "event.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "threadstore.h"
-#include "restrictedcallouts.h"
+#include "threadstore.inl"
+#include "RestrictedCallouts.h"
 
 // The head of the chains of GC callouts, one per callout type.
 RestrictedCallouts::GcRestrictedCallout * RestrictedCallouts::s_rgGcRestrictedCallouts[GCRC_Count] = { 0 };
@@ -63,7 +64,7 @@ bool RestrictedCallouts::RegisterGcCallout(GcRestrictedCalloutKind eKind, void *
         RhFailFast();
     }
 
-    GcRestrictedCallout * pCallout = new GcRestrictedCallout();
+    GcRestrictedCallout * pCallout = new (nothrow) GcRestrictedCallout();
     if (pCallout == NULL)
         return false;
 
@@ -123,7 +124,7 @@ void RestrictedCallouts::UnregisterGcCallout(GcRestrictedCalloutKind eKind, void
 // success, false if insufficient memory was available for the registration.
 bool RestrictedCallouts::RegisterRefCountedHandleCallback(void * pCalloutMethod, EEType * pTypeFilter)
 {
-    HandleTableRestrictedCallout * pCallout = new HandleTableRestrictedCallout();
+    HandleTableRestrictedCallout * pCallout = new (nothrow) HandleTableRestrictedCallout();
     if (pCallout == NULL)
         return false;
 

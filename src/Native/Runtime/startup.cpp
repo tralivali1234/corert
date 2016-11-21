@@ -1,38 +1,31 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
-#include "rhcommon.h"
-#ifdef DACCESS_COMPILE
-#include "gcrhenv.h"
-#endif // DACCESS_COMPILE
-
-#ifndef DACCESS_COMPILE
-#include "commontypes.h"
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+#include "common.h"
+#include "CommonTypes.h"
+#include "CommonMacros.h"
 #include "daccess.h"
-#include "commonmacros.h"
-#include "palredhawkcommon.h"
-#include "palredhawk.h"
-#include "assert.h"
+#include "PalRedhawkCommon.h"
+#include "PalRedhawk.h"
+#include "rhassert.h"
 #include "slist.h"
 #include "gcrhinterface.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 #include "thread.h"
 #include "holder.h"
-#include "crst.h"
+#include "Crst.h"
 #include "event.h"
-#include "rwlock.h"
+#include "RWLock.h"
 #include "threadstore.h"
-#include "runtimeinstance.h"
-#include "instancestore.h"
+#include "threadstore.inl"
+#include "RuntimeInstance.h"
 #include "rhbinder.h"
-#include "cachedinterfacedispatch.h"
-#include "rhconfig.h"
-#include "stresslog.h"
-#include "restrictedcallouts.h"
-#endif !DACCESS_COMPILE
+#include "CachedInterfaceDispatch.h"
+#include "RhConfig.h"
+#include "stressLog.h"
+#include "RestrictedCallouts.h"
 
 #ifndef DACCESS_COMPILE
 
@@ -42,34 +35,26 @@ unsigned __int64 g_startupTimelineEvents[NUM_STARTUP_TIMELINE_EVENTS] = { 0 };
 
 HANDLE RtuCreateRuntimeInstance(HANDLE hPalInstance);
 
-#ifdef FEATURE_VSD
-bool RtuInitializeVSD();
+
+#ifdef PLATFORM_UNIX
+Int32 __stdcall RhpHardwareExceptionHandler(UIntNative faultCode, UIntNative faultAddress, PAL_LIMITED_CONTEXT* palContext, UIntNative* arg0Reg, UIntNative* arg1Reg);
+#else
+Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
 #endif
 
-#ifndef FEATURE_DECLSPEC_THREAD
-EXTERN_C UInt32 _tls_index;
-#endif // FEATURE_DECLSPEC_THREAD
-
-UInt32 _fls_index = FLS_OUT_OF_INDEXES;
-
-
-Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
-void __stdcall FiberDetach(void* lpFlsData);
 void CheckForPalFallback();
+void DetectCPUFeatures();
 
 extern RhConfig * g_pRhConfig;
+
+EXTERN_C bool g_fHasFastFxsave = false;
+
+CrstStatic g_CastCacheLock;
+CrstStatic g_ThunkPoolLock;
 
 bool InitDLL(HANDLE hPalInstance)
 {
     CheckForPalFallback();
-
-#ifdef FEATURE_VSD
-    //
-    // init VSD
-    //
-    if (!RtuInitializeVSD())
-        return false;
-#endif
 
 #ifdef FEATURE_CACHED_INTERFACE_DISPATCH
     //
@@ -86,7 +71,11 @@ bool InitDLL(HANDLE hPalInstance)
         return false;
 
 #ifndef APP_LOCAL_RUNTIME
+#ifndef PLATFORM_UNIX
     PalAddVectoredExceptionHandler(1, RhpVectoredExceptionHandler);
+#else
+    PalSetHardwareExceptionHandler(RhpHardwareExceptionHandler);
+#endif
 #endif
 
     //
@@ -97,33 +86,15 @@ bool InitDLL(HANDLE hPalInstance)
         return false;
     STARTUP_TIMELINE_EVENT(NONGC_INIT_COMPLETE);
 
-#ifdef FEATURE_DECLSPEC_THREAD
-#if !defined(MODERN_OS) && !defined(APP_LOCAL_RUNTIME)
-    OSVERSIONINFOEXW osvi;
-    osvi.dwOSVersionInfoSize = sizeof(osvi);
-    if (!PalGetVersionExW(&osvi))
-        return false;
-
-    if (osvi.dwMajorVersion < 6)
-    {
-        ASSERT_MSG(osvi.dwMajorVersion >= 6, "NT version 6 or greater is required.  (i.e. Vista or Server 2008)");
-        return false;
-    }
-#endif // !MODERN_OS && !APP_LOCAL_RUNTIME
-#else
-    _tls_index = PalTlsAlloc();
-    if (_tls_index > TLS_NUM_INLINE_SLOTS)
-        return false;
-#endif // FEATURE_DECLSPEC_THREAD
-
-    _fls_index = PalFlsAlloc(FiberDetach);
-    if (_fls_index == FLS_OUT_OF_INDEXES)
-        return false;
-
     // @TODO: currently we're always forcing a workstation GC.
     // @TODO: GC per-instance vs per-DLL state separation
-    if (!RedhawkGCInterface::InitializeSubsystems(RedhawkGCInterface::GCType_Workstation))
+    RedhawkGCInterface::GCType gcType = g_pRhConfig->GetUseServerGC()
+        ? RedhawkGCInterface::GCType_Server
+        : RedhawkGCInterface::GCType_Workstation;
+
+    if (!RedhawkGCInterface::InitializeSubsystems(gcType))
         return false;
+
     STARTUP_TIMELINE_EVENT(GC_INIT_COMPLETE);
 
 #ifdef STRESS_LOG
@@ -131,12 +102,6 @@ bool InitDLL(HANDLE hPalInstance)
     UInt32 dwStressLogLevel = g_pRhConfig->GetStressLogLevel();
 
     unsigned facility = (unsigned)LF_ALL;
-#ifdef _DEBUG
-    if (dwTotalStressLogSize == 0)
-        dwTotalStressLogSize = 1024 * STRESSLOG_CHUNK_SIZE;
-    if (dwStressLogLevel == 0)
-        dwStressLogLevel = LL_INFO1000;
-#endif
     unsigned dwPerThreadChunks = (dwTotalStressLogSize / 24) / STRESSLOG_CHUNK_SIZE;
     if (dwTotalStressLogSize != 0)
     {
@@ -145,6 +110,14 @@ bool InitDLL(HANDLE hPalInstance)
                               (unsigned)dwTotalStressLogSize, hPalInstance);
     }
 #endif // STRESS_LOG
+
+    DetectCPUFeatures();
+
+    if (!g_CastCacheLock.InitNoThrow(CrstType::CrstCastCache))
+        return false;
+
+    if (!g_ThunkPoolLock.InitNoThrow(CrstType::CrstCastCache))
+        return false;
 
     return true;
 }
@@ -175,6 +148,31 @@ void CheckForPalFallback()
             RhFailFast();
     }
 #endif // _DEBUG
+}
+
+void DetectCPUFeatures()
+{
+#if !defined(CORERT) // @TODO: CORERT: DetectCPUFeatures
+
+#ifdef _X86_
+    // We depend on fxsave / fxrstor.  These were added to Pentium II and later, so they're pretty well guaranteed to be
+    // available, but we double-check anyway and fail fast if they are not supported.
+    CPU_INFO cpuInfo;
+    PalCpuIdEx(1, 0, &cpuInfo);
+    if (!(cpuInfo.Edx & X86_FXSR))  
+        RhFailFast();
+#endif
+
+#ifdef _AMD64_
+    // AMD has a "fast" mode for fxsave/fxrstor, which omits the saving of xmm registers.  The OS will enable this mode
+    // if it is supported.  So if we continue to use fxsave/fxrstor, we must manually save/restore the xmm registers.
+    CPU_INFO cpuInfo;
+    PalCpuIdEx(0x80000001, 0, &cpuInfo);
+    if (cpuInfo.Edx & AMD_FFXSR)
+        g_fHasFastFxsave = true;
+#endif
+
+#endif // !CORERT
 }
 
 #ifdef PROFILE_STARTUP
@@ -212,7 +210,7 @@ void AppendInt64(char * pBuffer, UInt32* pLen, UInt64 value)
 }
 #endif // PROFILE_STARTUP
 
-bool UninitDLL(HANDLE hModDLL)
+bool UninitDLL(HANDLE /*hModDLL*/)
 {
 #ifdef PROFILE_STARTUP
     char buffer[1024];
@@ -230,20 +228,20 @@ bool UninitDLL(HANDLE hModDLL)
         AppendInt64(buffer, &len, g_registerModuleTraces[i].End.QuadPart);
     }
 
-    buffer[len++] = '\r';
     buffer[len++] = '\n';
 
-    UInt32 cchWritten;
-    PalWriteFile(PalGetStdHandle(STD_OUTPUT_HANDLE), buffer, len, &cchWritten, NULL);
+    fwrite(buffer, len, 1, stdout);
 #endif // PROFILE_STARTUP
     return true;
 }
 
-void DllThreadAttach(HANDLE hPalInstance)
+void DllThreadAttach(HANDLE /*hPalInstance*/)
 {
     // We do not call ThreadStore::AttachThread from here because the loader lock is held.  Instead, the 
     // threads themselves will do this on their first reverse pinvoke.
 }
+
+volatile bool g_processShutdownHasStarted = false;
 
 void DllThreadDetach()
 {
@@ -253,18 +251,30 @@ void DllThreadDetach()
     Thread* pCurrentThread = ThreadStore::GetCurrentThreadIfAvailable();
     if (pCurrentThread != NULL && !pCurrentThread->IsDetached())
     {
-        ASSERT_UNCONDITIONALLY("Detaching thread whose home fiber has not been detached");
-        RhFailFast();
+        // Once shutdown starts, RuntimeThreadShutdown callbacks are ignored, implying that
+        // it is no longer guaranteed that exiting threads will be detached.
+        if (!g_processShutdownHasStarted)
+        {
+            ASSERT_UNCONDITIONALLY("Detaching thread whose home fiber has not been detached");
+            RhFailFast();
+        }
     }
 }
 
-void __stdcall FiberDetach(void* lpFlsData)
+void __stdcall RuntimeThreadShutdown(void* thread)
 {
-    // Note: loader lock is *not* held here!
+    // Note: loader lock is normally *not* held here!
+    // The one exception is that the loader lock may be held during the thread shutdown callback
+    // that is made for the single thread that runs the final stages of orderly process
+    // shutdown (i.e., the thread that delivers the DLL_PROCESS_DETACH notifications when the
+    // process is being torn down via an ExitProcess call).
+    UNREFERENCED_PARAMETER(thread);
+    ASSERT((Thread*)thread == ThreadStore::GetCurrentThread());
 
-    ASSERT(lpFlsData == PalFlsGetValue(_fls_index));
-
-    ThreadStore::DetachCurrentThreadIfHomeFiber();
+    if (!g_processShutdownHasStarted)
+    {
+        ThreadStore::DetachCurrentThread();
+    }
 }
 
 COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterModule, (ModuleHeader *pModuleHeader))
@@ -288,17 +298,6 @@ COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterModule, (ModuleHeader *pModuleHeader
         g_registerModuleCount++;
     }
 #endif // PROFILE_STARTUP
-
-    return UInt32_TRUE;
-}
-
-
-COOP_PINVOKE_HELPER(UInt32_BOOL, RhpRegisterSimpleModule, (SimpleModuleHeader *pModuleHeader))
-{
-    RuntimeInstance * pInstance = GetRuntimeInstance();
-
-    if (!pInstance->RegisterSimpleModule(pModuleHeader))
-        return UInt32_FALSE;
 
     return UInt32_TRUE;
 }
@@ -343,15 +342,13 @@ HANDLE RtuCreateRuntimeInstance(HANDLE hPalInstance)
 // @TODO: Eventually we'll probably have a hosting API and explicit shutdown request. When that happens we'll
 // something more sophisticated here since we won't be able to rely on the OS cleaning up after us.
 //
-COOP_PINVOKE_HELPER(void, RhpShutdownHelper, (UInt32 uExitCode))
+COOP_PINVOKE_HELPER(void, RhpShutdown, ())
 {
-    // If the classlib has requested it perform a last pass of the finalizer thread.
-    RedhawkGCInterface::ShutdownFinalization();
-
 #ifdef FEATURE_PROFILING
     GetRuntimeInstance()->WriteProfileInfo();
 #endif // FEATURE_PROFILING
+    // Indicate that runtime shutdown is complete and that the caller is about to start shutting down the entire process.
+    g_processShutdownHasStarted = true;
 }
 
 #endif // !DACCESS_COMPILE
-

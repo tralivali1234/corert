@@ -1,8 +1,11 @@
 <Project ToolsVersion="12.0" DefaultTargets="BuildAndTest" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="dir.props" />
-  <Import Project="BuildValues.props" />
 
   <ItemGroup>
+    <!-- This project requires ILASM and we have access to that only on Windows -->
+    <ExcludeProjects Condition="'$(OSEnvironment)'!='Windows_NT'" Include="**\TypeSystem.Tests.csproj" />
+    <ExcludeProjects Condition="'$(OSEnvironment)'!='Windows_NT'" Include="**\ILCompiler.MetadataTransform.Tests.csproj" />
+
     <Project Include="*\src\*.csproj" Exclude="@(ExcludeProjects)" />
     <Project Include="*\src\*.vbproj" Condition="'$(IncludeVbProjects)'!='false'" Exclude="@(ExcludeProjects)" />
     <Project Include="*\test*\**\*.csproj" Exclude="@(ExcludeProjects)" />
@@ -12,6 +15,8 @@
   <Import Project="..\dir.targets" />
 
   <Import Project="..\dir.traversal.targets" />
+
+  <Import Project="packaging\packages.targets" />
 
   <Import Project="$(ToolsDir)packages.targets" Condition="Exists('$(ToolsDir)packages.targets') and '$(ImportGetNuGetPackageVersions)' != 'false'" />
   <Import Project="$(ToolsDir)UpdateBuildValues.targets" Condition="Exists('$(ToolsDir)UpdateBuildValues.targets')" />
@@ -23,14 +28,6 @@
     </TraversalBuildDependsOn>
   </PropertyGroup>
 
-  <PropertyGroup>
-    <GenerateCodeCoverageReportForAll>true</GenerateCodeCoverageReportForAll>
-  </PropertyGroup>
-  <Import Project="$(ToolsDir)CodeCoverage.targets" Condition="Exists('$(ToolsDir)CodeCoverage.targets')" />
-  <Import Project="$(ToolsDir)PerfTesting.targets" Condition="Exists('$(ToolsDir)PerfTesting.targets')" />
-
-  <!-- When doing a traversal build restore the tools runtime before the traversal starts to avoid races --> 
-  <Import Project="$(ToolsDir)toolruntime.targets" Condition="Exists('$(ToolsDir)toolruntime.targets')" />
   <PropertyGroup Condition="Exists('$(ToolsDir)toolruntime.targets')">
     <TraversalBuildDependsOn>
       EnsureBuildToolsRuntime;

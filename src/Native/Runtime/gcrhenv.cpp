@@ -1,7 +1,6 @@
-//
-// Copyright (c) Microsoft Corporation.  All rights reserved.
-// Licensed under the MIT license. See LICENSE file in the project root for full license information.
-//
+// Licensed to the .NET Foundation under one or more agreements.
+// The .NET Foundation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
 
 //
 // This module provides data storage and implementations needed by gcrhenv.h to help provide an isolated build
@@ -12,47 +11,53 @@
 #include "common.h"
 
 #include "gcenv.h"
-#include "gc.h"
-#include "restrictedcallouts.h"
+#include "gcheaputilities.h"
 
-#include "palredhawkcommon.h"
+#ifdef FEATURE_STANDALONE_GC
+#include "gcenv.ee.h"
+#else
+#include "../gc/env/gcenv.ee.h"
+#endif // FEATURE_STANDALONE_GC
+
+#include "RestrictedCallouts.h"
 
 #include "gcrhinterface.h"
 
 #include "slist.h"
 #include "varint.h"
 #include "regdisplay.h"
-#include "stackframeiterator.h"
+#include "StackFrameIterator.h"
 
 #include "thread.h"
 
+#include "shash.h"
+#include "RWLock.h"
 #include "module.h"
-#include "rwlock.h"
-#include "runtimeinstance.h"
+#include "RuntimeInstance.h"
 #include "objecthandle.h"
 #include "eetype.inl"
-#include "rhconfig.h"
+#include "RhConfig.h"
 
 #include "threadstore.h"
+#include "threadstore.inl"
+#include "thread.inl"
 
 #include "gcdesc.h"
-#include "syncclean.hpp"
+#include "SyncClean.hpp"
 
-typedef void(__stdcall *PFLS_CALLBACK_FUNCTION) (void* lpFlsData);
+#include "daccess.h"
 
-#include "PalRedhawkFunctions.h"
+#include "GCMemoryHelpers.h"
+
+#include "holder.h"
+
+GPTR_IMPL(EEType, g_pFreeObjectEEType);
 
 #define USE_CLR_CACHE_SIZE_BEHAVIOR
 
-EXTERN_C UInt32_BOOL __stdcall PalSwitchToThread();
-EXTERN_C void __stdcall PalSleep(UInt32 milliseconds);
-
-typedef UInt32(__stdcall *BackgroundCallback)(_In_opt_ void* pCallbackContext);
-EXTERN_C UInt32_BOOL __stdcall PalStartFinalizerThread(_In_ BackgroundCallback callback, _In_opt_ void* pCallbackContext);
-bool StartFinalizerThread();
-
 
 #ifndef DACCESS_COMPILE
+bool StartFinalizerThread();
 
 // Undo the definitions of any macros set up for GC code which conflict with our usage of PAL APIs below.
 #undef GetCurrentThreadId
@@ -69,41 +74,13 @@ bool StartFinalizerThread();
 
 #endif // !DACCESS_COMPILE
 
-#if 0 // @TODO_SDM: in gccommon.cpp
-// The one and only GC heap in use. Initialized in RedhawkGCInterface::InitializeSubsystems() below.
-GPTR_IMPL_INIT(GCHeap, g_pGCHeap, NULL);
-#endif
-
-#if 0 // @TODO_SDM: in gcenv.windows.cpp
-// Special MethodTable used by the GC to mark free list entries. Initialized in
-// RedhawkGCInterface::InitializeSubsystems() below.
-GPTR_IMPL_INIT(MethodTable, g_pFreeObjectMethodTable, NULL);
-#endif
-
 #ifndef DACCESS_COMPILE
-
-#if 0 // @TODO_SDM: in gccommon.cpp
-// Hosting API related (zero OK).
-LONG g_bLowMemoryFromHost = 0;
-#endif // 0
-
-#if 0 // @TODO_SDM: in gcenv.windows.cpp
-// Signals when threads can potentially be hijacked on their way back into the runtime.
-// todo: thread suspension, runtime entry/exit story needs to be worked out
-UInt32_BOOL g_TrapReturningThreads = 0;
-
-#ifdef FEATURE_PREMORTEM_FINALIZATION
-// Used during shutdown, don't need to worry about this (yet).
-bool g_fFinalizerRunOnShutDown = false;
-#endif // FEATURE_PREMORTEM_FINALIZATION
-#endif
 
 //
 // Simplified EEConfig -- It is just a static member, which statically initializes to the default values and
 // has no dynamic initialization.  Some settings may change at runtime, however.  (Example: gcstress is
 // enabled via a compiled-in call from a given managed module, not through snooping an environment setting.)
 //
-
 static EEConfig s_sDummyConfig;
 EEConfig* g_pConfig = &s_sDummyConfig;
 
@@ -121,6 +98,9 @@ int EEConfig::GetGCconcurrent()
 static RhConfig g_sRhConfig;
 RhConfig * g_pRhConfig = &g_sRhConfig;
 
+#if defined(ENABLE_PERF_COUNTERS) || defined(FEATURE_EVENT_TRACE)
+DWORD g_dwHandles = 0;
+#endif // ENABLE_PERF_COUNTERS || FEATURE_EVENT_TRACE
 
 #ifdef FEATURE_ETW
 //
@@ -134,19 +114,19 @@ UInt32 EtwCallback(UInt32 IsEnabled, RH_ETW_CONTEXT * pContext)
 {
     if (IsEnabled &&
         (pContext->RegistrationHandle == Microsoft_Windows_Redhawk_GC_PrivateHandle) &&
-        GCHeap::IsGCHeapInitialized())
+        GCHeapUtilities::IsGCHeapInitialized())
     {
-        FireEtwGCSettings(GCHeap::GetGCHeap()->GetValidSegmentSize(FALSE),
-                          GCHeap::GetGCHeap()->GetValidSegmentSize(TRUE),
-                          GCHeap::IsServerHeap());
-        GCHeap::GetGCHeap()->TraceGCSegments();
+        FireEtwGCSettings(GCHeapUtilities::GetGCHeap()->GetValidSegmentSize(FALSE),
+                          GCHeapUtilities::GetGCHeap()->GetValidSegmentSize(TRUE),
+                          GCHeapUtilities::IsServerHeap());
+        GCHeapUtilities::GetGCHeap()->TraceGCSegments();
     }
 
     // Special check for the runtime provider's GCHeapCollectKeyword.  Profilers
     // flick this to force a full GC.
     if (IsEnabled && 
         (pContext->RegistrationHandle == Microsoft_Windows_Redhawk_GC_PublicHandle) &&
-        GCHeap::IsGCHeapInitialized() &&
+        GCHeapUtilities::IsGCHeapInitialized() &&
         ((pContext->MatchAnyKeyword & CLR_GCHEAPCOLLECT_KEYWORD) != 0))
     {
         // Profilers may (optionally) specify extra data in the filter parameter
@@ -178,6 +158,13 @@ UInt32 EtwCallback(UInt32 IsEnabled, RH_ETW_CONTEXT * pContext)
 // The boolean parameter should be true if a server GC is required and false for workstation. Returns true on
 // success or false if a subsystem failed to initialize.
 
+#ifndef DACCESS_COMPILE
+CrstStatic g_SuspendEELock;
+#ifdef _MSC_VER
+#pragma warning(disable:4815) // zero-sized array in stack object will have no elements
+#endif // _MSC_VER
+EEType g_FreeObjectEEType;
+
 // static 
 bool RedhawkGCInterface::InitializeSubsystems(GCType gcType)
 {
@@ -195,24 +182,40 @@ bool RedhawkGCInterface::InitializeSubsystems(GCType gcType)
     MICROSOFT_WINDOWS_REDHAWK_GC_PUBLIC_PROVIDER_Context.RegistrationHandle = Microsoft_Windows_Redhawk_GC_PublicHandle;
 #endif // FEATURE_ETW
 
-    InitializeSystemInfo();
+    if (!InitializeSystemInfo())
+    {
+        return false;
+    }
 
     // Initialize the special EEType used to mark free list entries in the GC heap.
-    EEType *pFreeObjectType = new EEType();      //@TODO: remove 'new'
-    pFreeObjectType->InitializeAsGcFreeType();
+    g_FreeObjectEEType.InitializeAsGcFreeType();
 
     // Place the pointer to this type in a global cell (typed as the structurally equivalent MethodTable
     // that the GC understands).
-    g_pFreeObjectMethodTable = (MethodTable *)pFreeObjectType;
+    g_pFreeObjectMethodTable = (MethodTable *)&g_FreeObjectEEType;
+    g_pFreeObjectEEType = &g_FreeObjectEEType;
+
+    if (!g_SuspendEELock.InitNoThrow(CrstSuspendEE))
+        return false;
 
     // Set the GC heap type.
     bool fUseServerGC = (gcType == GCType_Server);
-    GCHeap::InitializeHeapType(fUseServerGC);
+    InitializeHeapType(fUseServerGC);
 
     // Create the GC heap itself.
-    GCHeap *pGCHeap = GCHeap::CreateGCHeap();
+#ifdef FEATURE_STANDALONE_GC
+    IGCToCLR* gcToClr = new (nothrow) GCToEEInterface();
+    if (!gcToClr)
+        return false;
+#else
+    IGCToCLR* gcToClr = nullptr;
+#endif // FEATURE_STANDALONE_GC
+
+    IGCHeap *pGCHeap = InitializeGarbageCollector(gcToClr);
     if (!pGCHeap)
         return false;
+
+    g_pGCHeap = pGCHeap;
 
     // Initialize the GC subsystem.
     HRESULT hr = pGCHeap->Initialize();
@@ -228,30 +231,44 @@ bool RedhawkGCInterface::InitializeSubsystems(GCType gcType)
 
     return true;
 }
+#endif // !DACCESS_COMPILE
 
 // Allocate an object on the GC heap.
-//  pThread         -  current Thread
-//  cbSize          -  size in bytes of the final object
-//  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
 //  pEEType         -  type of the object
+//  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
+//  cbSize          -  size in bytes of the final object
+//  pTransitionFrame-  transition frame to make stack crawable
 // Returns a pointer to the object allocated or NULL on failure.
 
-// static
-void* RedhawkGCInterface::Alloc(Thread *pThread, UIntNative cbSize, UInt32 uFlags, EEType *pEEType)
+COOP_PINVOKE_HELPER(void*, RhpGcAlloc, (EEType *pEEType, UInt32 uFlags, UIntNative cbSize, void * pTransitionFrame))
 {
-    ASSERT(GCHeap::UseAllocationContexts());
+    Thread * pThread = ThreadStore::GetCurrentThread();
+
+    pThread->SetCurrentThreadPInvokeTunnelForGcAlloc(pTransitionFrame);
+
+    ASSERT(GCHeapUtilities::UseAllocationContexts());
     ASSERT(!pThread->IsDoNotTriggerGcSet());
 
+#if BIT64
+    if (!g_pConfig->GetGCAllowVeryLargeObjects())
+    {
+        // Restrict maximum object size on 64-bit to historic limit. Framework implementation
+        // and tests depend on it currently.
+        if (cbSize >= 0x7FFFFFE0)
+            return NULL;
+    }
+#endif
+
     // Save the EEType for instrumentation purposes.
-    SetLastAllocEEType(pEEType);
+    RedhawkGCInterface::SetLastAllocEEType(pEEType);
 
     Object * pObject;
 #ifdef FEATURE_64BIT_ALIGNMENT
     if (uFlags & GC_ALLOC_ALIGN8)
-        pObject = GCHeap::GetGCHeap()->AllocAlign8(pThread->GetAllocContext(), cbSize, uFlags);
+        pObject = GCHeapUtilities::GetGCHeap()->AllocAlign8(pThread->GetAllocContext(), cbSize, uFlags);
     else
 #endif // FEATURE_64BIT_ALIGNMENT
-        pObject = GCHeap::GetGCHeap()->Alloc(pThread->GetAllocContext(), cbSize, uFlags);
+        pObject = GCHeapUtilities::GetGCHeap()->Alloc(pThread->GetAllocContext(), cbSize, uFlags);
 
     // NOTE: we cannot call PublishObject here because the object isn't initialized!
 
@@ -261,31 +278,14 @@ void* RedhawkGCInterface::Alloc(Thread *pThread, UIntNative cbSize, UInt32 uFlag
 // returns the object pointer for caller's convenience
 COOP_PINVOKE_HELPER(void*, RhpPublishObject, (void* pObject, UIntNative cbSize))
 {
+    UNREFERENCED_PARAMETER(cbSize);
     ASSERT(cbSize >= LARGE_OBJECT_SIZE);
-    GCHeap::GetGCHeap()->PublishObject((BYTE*)pObject);
+    GCHeapUtilities::GetGCHeap()->PublishObject((uint8_t*)pObject);
     return pObject;
 }
-
-#if 0 // @TODO: This is unused, why is it here?
-
-// Allocate an object on the large GC heap. Used when you want to force an allocation on the large heap
-// that wouldn't normally go there (e.g. objects containing double fields).
-//  cbSize          -  size in bytes of the final object
-//  uFlags          -  GC type flags (see gc.h GC_ALLOC_*)
-// Returns a pointer to the object allocated or NULL on failure.
-
-// static 
-void* RedhawkGCInterface::AllocLarge(UIntNative cbSize, UInt32 uFlags)
-{
-    ASSERT(!GetThread()->IsDoNotTriggerGcSet());
-    Object * pObject = GCHeap::GetGCHeap()->AllocLHeap(cbSize, uFlags);
-    // NOTE: we cannot call PublishObject here because the object isn't initialized!
-    return pObject;
-}
-#endif
 
 // static
-void RedhawkGCInterface::InitAllocContext(alloc_context * pAllocContext)
+void RedhawkGCInterface::InitAllocContext(gc_alloc_context * pAllocContext)
 {
     // NOTE: This method is currently unused because the thread's alloc_context is initialized via
     // static initialization of tls_CurrentThread.  If the initial contents of the alloc_context
@@ -296,17 +296,17 @@ void RedhawkGCInterface::InitAllocContext(alloc_context * pAllocContext)
 }
 
 // static
-void RedhawkGCInterface::ReleaseAllocContext(alloc_context * pAllocContext)
+void RedhawkGCInterface::ReleaseAllocContext(gc_alloc_context * pAllocContext)
 {
-    GCHeap::GetGCHeap()->FixAllocContext(pAllocContext, FALSE, NULL, NULL);
+    GCHeapUtilities::GetGCHeap()->FixAllocContext(pAllocContext, FALSE, NULL, NULL);
 }
 
 // static 
 void RedhawkGCInterface::WaitForGCCompletion()
 {
-    ASSERT(GCHeap::IsGCHeapInitialized());
+    ASSERT(GCHeapUtilities::IsGCHeapInitialized());
 
-    GCHeap::GetGCHeap()->WaitUntilGCComplete();
+    GCHeapUtilities::GetGCHeap()->WaitUntilGCComplete();
 }
 
 #endif // !DACCESS_COMPILE
@@ -331,8 +331,9 @@ AppDomain g_sDefaultDomain;
 // Trivial sync block cache. Will no doubt be replaced with a real implementation soon.
 //
 
+#ifdef VERIFY_HEAP
 SyncBlockCache g_sSyncBlockCache;
-
+#endif // VERIFY_HEAP
 
 //-------------------------------------------------------------------------------------------------
 // Used only by GC initialization, this initializes the EEType used to mark free entries in the GC heap. It
@@ -359,17 +360,167 @@ struct EnumGcRefContext : GCEnumContext
     EnumGcRefScanContext * sc;
 };
 
+bool IsOnReadablePortionOfThread(EnumGcRefScanContext * pSc, PTR_VOID pointer)
+{
+    if (!pSc->thread_under_crawl->IsWithinStackBounds(pointer))
+    {
+        return false;
+    }
+    
+    // If the stack_limit is 0, then it wasn't set properly, and the check below will not
+    // operate correctly.
+    ASSERT(pSc->stack_limit != 0);
+
+    // This ensures that the pointer is not in a currently-unused portion of the stack
+    // because the above check is only verifying against the entire stack bounds,
+    // but stack_limit is describing the current bound of the stack
+    if (PTR_TO_TADDR(pointer) < pSc->stack_limit)
+    {
+        return false;
+    }
+    return true;
+}
+
+#ifdef BIT64
+#define CONSERVATIVE_REGION_MAGIC_NUMBER 0x87DF7A104F09E0A9ULL
+#else
+#define CONSERVATIVE_REGION_MAGIC_NUMBER 0x4F09E0A9
+#endif
+
+// This is a structure that is created by executing runtime code in order to report a conservative 
+// region. In managed code if there is a pinned byref pointer to one of this (with the appropriate
+// magic number set in it, and a hash that matches up) then the region from regionPointerLow to 
+// regionPointerHigh will be reported conservatively. This can only be used to report memory regions
+// on the current stack and the structure must itself be located on the stack.
+struct ConservativelyReportedRegionDesc
+{
+    // If this is really a ConservativelyReportedRegionDesc then the magic value will be
+    // CONSERVATIVE_REGION_MAGIC_NUMBER, and the hash will be the result of CalculateHash
+    // across magic, regionPointerLow, and regionPointerHigh
+    uintptr_t magic;
+    PTR_VOID regionPointerLow;
+    PTR_VOID regionPointerHigh;
+    uintptr_t hash;
+    
+    static uintptr_t CalculateHash(uintptr_t h1, uintptr_t h2, uintptr_t h3)
+    {
+        uintptr_t hash = h1;
+        hash = ((hash << 13) ^ hash) ^ h2;
+        hash = ((hash << 13) ^ hash) ^ h3;
+        return hash;
+    }
+};
+
+typedef DPTR(ConservativelyReportedRegionDesc) PTR_ConservativelyReportedRegionDesc;
+
+bool IsPtrAligned(TADDR value)
+{
+    return (value & (POINTER_SIZE - 1)) == 0;
+}
+
+// Logic to actually conservatively report a ConservativelyReportedRegionDesc
+// This logic is to be used when attempting to promote a pinned, interior pointer.
+// It will attempt to heuristically identify ConservativelyReportedRegionDesc structures
+// and if they exist, it will conservatively report a memory region.
+static void ReportExplicitConservativeReportedRegionIfValid(EnumGcRefContext * pCtx, PTR_PTR_VOID pObject)
+{
+    // If the stack_limit isn't set (which can only happen for frames which make a p/invoke call
+    // there cannot be a ConservativelyReportedRegionDesc
+    if (pCtx->sc->stack_limit == 0)
+        return;
+
+    PTR_ConservativelyReportedRegionDesc conservativeRegionDesc = (PTR_ConservativelyReportedRegionDesc)(*pObject);
+
+    // Ensure that conservativeRegionDesc pointer points at a readable memory region 
+    if (!IsPtrAligned(PTR_TO_TADDR(conservativeRegionDesc)))
+    {
+        return;
+    }
+
+    if (!IsOnReadablePortionOfThread(pCtx->sc, conservativeRegionDesc))
+    {
+        return;
+    }
+    if (!IsOnReadablePortionOfThread(pCtx->sc, conservativeRegionDesc + 1))
+    {
+        return;
+    }
+
+    // Now, check to see if what we're pointing at is actually a ConservativeRegionDesc
+    // First: check the magic number. If that doesn't match, it cannot be one
+    if (conservativeRegionDesc->magic != CONSERVATIVE_REGION_MAGIC_NUMBER)
+    {
+        return;
+    }
+
+    // Second: check to see that the region pointers point at memory which is aligned
+    // such that the pointers could be pointers to object references
+    if (!IsPtrAligned(PTR_TO_TADDR(conservativeRegionDesc->regionPointerLow)))
+    {
+        return;
+    }
+    if (!IsPtrAligned(PTR_TO_TADDR(conservativeRegionDesc->regionPointerHigh)))
+    {
+        return;
+    }
+
+    // Third: check that start is before end.
+    if (conservativeRegionDesc->regionPointerLow >= conservativeRegionDesc->regionPointerHigh)
+    {
+        return;
+    }
+
+#ifndef DACCESS_COMPILE
+    // This fails for cross-bitness dac compiles and isn't really needed in the DAC anyways.
+
+    // Fourth: Compute a hash of the above numbers. Check to see that the hash matches the hash
+    // value stored
+    if (ConservativelyReportedRegionDesc::CalculateHash(CONSERVATIVE_REGION_MAGIC_NUMBER, 
+                                                        (uintptr_t)PTR_TO_TADDR(conservativeRegionDesc->regionPointerLow),
+                                                        (uintptr_t)PTR_TO_TADDR(conservativeRegionDesc->regionPointerHigh)) 
+        != conservativeRegionDesc->hash)
+    {
+        return;
+    }
+#endif // DACCESS_COMPILE
+
+    // Fifth: Check to see that the region pointed at is within the bounds of the thread
+    if (!IsOnReadablePortionOfThread(pCtx->sc, conservativeRegionDesc->regionPointerLow))
+    {
+        return;
+    }
+    if (!IsOnReadablePortionOfThread(pCtx->sc, ((PTR_OBJECTREF)conservativeRegionDesc->regionPointerHigh) - 1))
+    {
+        return;
+    }
+
+    // At this point we're most likely working with a ConservativeRegionDesc. We'll assume
+    // that's true, and perform conservative reporting. (We've done enough checks to ensure that
+    // this conservative reporting won't itself cause an AV, even if our heuristics are wrong
+    // with the second and fifth set of checks)
+    GcEnumObjectsConservatively((PTR_OBJECTREF)conservativeRegionDesc->regionPointerLow, (PTR_OBJECTREF)conservativeRegionDesc->regionPointerHigh, pCtx->f, pCtx->sc);
+}
+
 static void EnumGcRefsCallback(void * hCallback, PTR_PTR_VOID pObject, UInt32 flags)
 {
     EnumGcRefContext * pCtx = (EnumGcRefContext *)hCallback;
 
     GcEnumObject((PTR_OBJECTREF)pObject, flags, pCtx->f, pCtx->sc);
+    
+    const UInt32 interiorPinned = GC_CALL_INTERIOR | GC_CALL_PINNED;
+    // If this is an interior pinned pointer, check to see if we're working with a ConservativeRegionDesc
+    // and if so, report a conservative region. NOTE: do this only during promotion as conservative
+    // reporting has no value during other GC phases.
+    if (((flags & interiorPinned) == interiorPinned) && (pCtx->sc->promotion))
+    {
+        ReportExplicitConservativeReportedRegionIfValid(pCtx, pObject);
+    }
 }
 
 // static 
 void RedhawkGCInterface::EnumGcRefs(ICodeManager * pCodeManager,
                                     MethodInfo * pMethodInfo, 
-                                    UInt32 codeOffset,
+                                    PTR_VOID safePointAddress,
                                     REGDISPLAY * pRegisterSet,
                                     void * pfnEnumCallback,
                                     void * pvCallbackData)
@@ -378,9 +529,10 @@ void RedhawkGCInterface::EnumGcRefs(ICodeManager * pCodeManager,
     ctx.pCallback = EnumGcRefsCallback;
     ctx.f  = (EnumGcRefCallbackFunc *)pfnEnumCallback;
     ctx.sc = (EnumGcRefScanContext *)pvCallbackData;
+    ctx.sc->stack_limit = pRegisterSet->GetSP();
 
     pCodeManager->EnumGcRefs(pMethodInfo, 
-                             codeOffset,
+                             safePointAddress,
                              pRegisterSet,
                              &ctx);
 }
@@ -417,16 +569,10 @@ void RedhawkGCInterface::BulkEnumGcObjRef(PTR_RtuObjectRef pRefs, UInt32 cRefs, 
     GcBulkEnumObjects((PTR_OBJECTREF)pRefs, cRefs, (EnumGcRefCallbackFunc *)pfnEnumCallback, (EnumGcRefScanContext *)pvCallbackData);
 }
 
-// static
-void RedhawkGCInterface::GarbageCollect(UInt32 uGeneration, UInt32 uMode)
-{
-    ASSERT(!GetThread()->IsDoNotTriggerGcSet());
-    GCHeap::GetGCHeap()->GarbageCollect(uGeneration, FALSE, uMode);
-}
-
 // static 
 GcSegmentHandle RedhawkGCInterface::RegisterFrozenSection(void * pSection, UInt32 SizeSection)
 {
+#ifdef FEATURE_BASICFREEZE
     segment_info seginfo;
 
     seginfo.pvMem           = pSection;
@@ -435,17 +581,16 @@ GcSegmentHandle RedhawkGCInterface::RegisterFrozenSection(void * pSection, UInt3
     seginfo.ibCommit        = seginfo.ibAllocated;
     seginfo.ibReserved      = seginfo.ibAllocated;
 
-    return (GcSegmentHandle)GCHeap::GetGCHeap()->RegisterFrozenSegment(&seginfo);
+    return (GcSegmentHandle)GCHeapUtilities::GetGCHeap()->RegisterFrozenSegment(&seginfo);
+#else // FEATURE_BASICFREEZE
+    return NULL;
+#endif // FEATURE_BASICFREEZE    
 }
 
 // static 
 void RedhawkGCInterface::UnregisterFrozenSection(GcSegmentHandle segment)
 {
-#if 1 // @TODO: only used for unload?
-    ASSERT(!"NYI - UnregisterFrozenSection");
-#else
-    GCHeap::GetGCHeap()->UnregisterFrozenSegment((segment_handle)segment);
-#endif
+    GCHeapUtilities::GetGCHeap()->UnregisterFrozenSegment((segment_handle)segment);
 }
 
 EXTERN_C UInt32_BOOL g_fGcStressStarted = UInt32_FALSE; // UInt32_BOOL because asm code reads it
@@ -458,7 +603,7 @@ void RedhawkGCInterface::StressGc()
         return;
     }
 
-    GarbageCollect((UInt32) -1, collection_blocking);
+    GCHeapUtilities::GetGCHeap()->GarbageCollect();
 }
 #endif // FEATURE_GC_STRESS
 
@@ -499,12 +644,12 @@ void RedhawkGCInterface::ScanHeap(GcScanObjectFunction pfnScanCallback, void *pC
     // Carefully attempt to set the global callback function (careful in that we won't overwrite another scan
     // that's being scheduled or in-progress). If someone beat us to it back off and wait for the
     // corresponding GC to complete.
-    while (FastInterlockCompareExchangePointer(&g_pfnHeapScan, pfnScanCallback, NULL) != NULL)
+    while (Interlocked::CompareExchangePointer(&g_pfnHeapScan, pfnScanCallback, NULL) != NULL)
     {
         // Wait in pre-emptive mode to avoid stalling another thread that's attempting a collection.
         Thread * pCurThread = GetThread();
-        ASSERT(pCurThread->PreemptiveGCDisabled());
-        pCurThread->EnablePreemptiveGC();
+        ASSERT(pCurThread->IsCurrentThreadInCooperativeMode());
+        pCurThread->EnablePreemptiveMode();
 
         // Give the other thread some time to get the collection going.
         if (PalSwitchToThread() == 0)
@@ -515,7 +660,7 @@ void RedhawkGCInterface::ScanHeap(GcScanObjectFunction pfnScanCallback, void *pC
         WaitForGCCompletion();
 
         // Come back into co-operative mode.
-        pCurThread->DisablePreemptiveGC();
+        pCurThread->DisablePreemptiveMode();
     }
 
     // We should never end up overwriting someone else's callback context when we won the race to set the
@@ -523,13 +668,13 @@ void RedhawkGCInterface::ScanHeap(GcScanObjectFunction pfnScanCallback, void *pC
     ASSERT(g_pvHeapScanContext == NULL);
     g_pvHeapScanContext = pContext;
 
-    // Initiate a full garbage collection (0xffffffff == all generations).
-    GarbageCollect(0xffffffff, collection_blocking);
+    // Initiate a full garbage collection
+    GCHeapUtilities::GetGCHeap()->GarbageCollect();
     WaitForGCCompletion();
 
     // Release our hold on the global scanning pointers.
     g_pvHeapScanContext = NULL;
-    FastInterlockExchangePointer(&g_pfnHeapScan, NULL);
+    Interlocked::ExchangePointer(&g_pfnHeapScan, NULL);
 #else
     UNREFERENCED_PARAMETER(pfnScanCallback);
     UNREFERENCED_PARAMETER(pContext);
@@ -542,7 +687,7 @@ void RedhawkGCInterface::ScanHeap(GcScanObjectFunction pfnScanCallback, void *pC
 void RedhawkGCInterface::ScanObject(void *pObject, GcScanObjectFunction pfnScanCallback, void *pContext)
 {
 #if !defined(DACCESS_COMPILE) && (defined(GC_PROFILING) || defined(FEATURE_EVENT_TRACE))
-    GCHeap::GetGCHeap()->WalkObject((Object*)pObject, (walk_fn)pfnScanCallback, pContext);
+    GCHeapUtilities::GetGCHeap()->WalkObject((Object*)pObject, (walk_fn)pfnScanCallback, pContext);
 #else
     UNREFERENCED_PARAMETER(pObject);
     UNREFERENCED_PARAMETER(pfnScanCallback);
@@ -583,7 +728,7 @@ void RedhawkGCInterface::ScanStackRoots(Thread *pThread, GcScanRootFunction pfnS
     sContext.m_pfnCallback = pfnScanCallback;
     sContext.m_pContext = pContext;
 
-    pThread->GcScanRoots(ScanRootsCallbackWrapper, &sContext);
+    pThread->GcScanRoots(reinterpret_cast<void*>(ScanRootsCallbackWrapper), &sContext);
 #else
     UNREFERENCED_PARAMETER(pThread);
     UNREFERENCED_PARAMETER(pfnScanCallback);
@@ -601,7 +746,7 @@ void RedhawkGCInterface::ScanStaticRoots(GcScanRootFunction pfnScanCallback, voi
     sContext.m_pfnCallback = pfnScanCallback;
     sContext.m_pContext = pContext;
 
-    GetRuntimeInstance()->EnumAllStaticGCRefs(ScanRootsCallbackWrapper, &sContext);
+    GetRuntimeInstance()->EnumAllStaticGCRefs(reinterpret_cast<void*>(ScanRootsCallbackWrapper), &sContext);
 #else
     UNREFERENCED_PARAMETER(pfnScanCallback);
     UNREFERENCED_PARAMETER(pContext);
@@ -635,7 +780,7 @@ bool RedhawkGCInterface::IsScanInProgress()
     // Only allow callers that have no RH thread or are in cooperative mode; i.e., don't
     // call this in preemptive mode, as the result would not be reliable in multi-threaded
     // environments.
-    ASSERT(GetThread() == NULL || GetThread()->PreemptiveGCDisabled());
+    ASSERT(GetThread() == NULL || GetThread()->IsCurrentThreadInCooperativeMode());
     return g_pfnHeapScan != NULL;
 }
 
@@ -669,25 +814,21 @@ UInt32 RedhawkGCInterface::GetGCDescSize(void * pType)
 
 COOP_PINVOKE_HELPER(void, RhpCopyObjectContents, (Object* pobjDest, Object* pobjSrc))
 {
-    SIZE_T cbDest = pobjDest->GetSize() - sizeof(ObjHeader);
-    SIZE_T cbSrc = pobjSrc->GetSize() - sizeof(ObjHeader);
+    size_t cbDest = pobjDest->GetSize() - sizeof(ObjHeader);
+    size_t cbSrc = pobjSrc->GetSize() - sizeof(ObjHeader);
     if (cbSrc != cbDest)
         return;
 
-    memcpy(pobjDest, pobjSrc, cbDest);
-    GCHeap::GetGCHeap()->SetCardsAfterBulkCopy((Object**) pobjDest, cbDest);
-}
+    ASSERT(pobjDest->get_EEType()->HasReferenceFields() == pobjSrc->get_EEType()->HasReferenceFields());
 
-// Move memory, in a way that is compatible with a move onto the heap, but
-// does not require the destination pointer to be on the heap.
-EXTERN_C void REDHAWK_CALLCONV RhpBulkWriteBarrier(void* pMemStart, UInt32 cbMemSize);
-
-COOP_PINVOKE_HELPER(void, RhBulkMoveWithWriteBarrier, (BYTE* pDest, BYTE* pSrc, int cbDest))
-{
-    memmove(pDest, pSrc, cbDest);
-    // Use RhpBulkWriteBarrier here instead of SetCardsAfterBulkCopy as RhpBulkWriteBarrier
-    // is both faster, and is compatible with a destination that isn't the GC heap.
-    RhpBulkWriteBarrier(pDest, cbDest);
+    if (pobjDest->get_EEType()->HasReferenceFields())
+    {
+        GCSafeCopyMemoryWithWriteBarrier(pobjDest, pobjSrc, cbDest);
+    }
+    else
+    {
+        memcpy(pobjDest, pobjSrc, cbDest);
+    }
 }
 
 COOP_PINVOKE_HELPER(void, RhpBox, (Object * pObj, void * pData))
@@ -700,18 +841,51 @@ COOP_PINVOKE_HELPER(void, RhpBox, (Object * pObj, void * pData))
     // cbObject includes ObjHeader (sync block index) and the EEType* field from Object and is rounded up to
     // suit GC allocation alignment requirements. cbFields on the other hand is just the raw size of the field
     // data.
-    SIZE_T cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
-    SIZE_T cbObject = pEEType->get_BaseSize();
-    SIZE_T cbFields = cbObject - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
+    size_t cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
+    size_t cbObject = pEEType->get_BaseSize();
+    size_t cbFields = cbObject - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
     
     UInt8 * pbFields = (UInt8*)pObj + sizeof(EEType*);
 
     // Copy the unboxed value type data into the new object.
-    memcpy(pbFields, pData, cbFields);
-
     // Perform any write barriers necessary for embedded reference fields.
     if (pEEType->HasReferenceFields())
-        GCHeap::GetGCHeap()->SetCardsAfterBulkCopy((Object**)pbFields, cbFields);
+    {
+        GCSafeCopyMemoryWithWriteBarrier(pbFields, pData, cbFields);
+    }
+    else
+    {
+        memcpy(pbFields, pData, cbFields);
+    }
+}
+
+bool EETypesEquivalentEnoughForUnboxing(EEType *pObjectEEType, EEType *pUnboxToEEType)
+{
+    if (pObjectEEType->IsEquivalentTo(pUnboxToEEType))
+        return true;
+
+    if (pObjectEEType->GetCorElementType() == pUnboxToEEType->GetCorElementType())
+    {
+        // Enums and primitive types can unbox if their CorElementTypes exactly match
+        switch (pObjectEEType->GetCorElementType())
+        {
+        case ELEMENT_TYPE_I1:
+        case ELEMENT_TYPE_U1:
+        case ELEMENT_TYPE_I2:
+        case ELEMENT_TYPE_U2:
+        case ELEMENT_TYPE_I4:
+        case ELEMENT_TYPE_U4:
+        case ELEMENT_TYPE_I8:
+        case ELEMENT_TYPE_U8:
+        case ELEMENT_TYPE_I:
+        case ELEMENT_TYPE_U:
+            return true;
+        default:
+            break;
+        }
+    }
+
+    return false;
 }
 
 COOP_PINVOKE_HELPER(void, RhUnbox, (Object * pObj, void * pData, EEType * pUnboxToEEType))
@@ -723,13 +897,13 @@ COOP_PINVOKE_HELPER(void, RhUnbox, (Object * pObj, void * pData, EEType * pUnbox
 
         // The first field of the Nullable is a Boolean which we must set to false in this case to indicate no
         // value is present.
-        *(Boolean*)pData = FALSE;
+        *(Boolean*)pData = Boolean_false;
 
         // Clear the value (in case there were GC references we wish to stop reporting).
         EEType * pEEType = pUnboxToEEType->GetNullableType();
-        SIZE_T cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
-        SIZE_T cbFields = pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
-        memset((UInt8*)pData + pUnboxToEEType->GetNullableValueOffset(), 0, cbFields);
+        size_t cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
+        size_t cbFields = pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
+        GCSafeZeroMemory((UInt8*)pData + pUnboxToEEType->GetNullableValueOffset(), cbFields);
 
         return;
     }
@@ -741,63 +915,42 @@ COOP_PINVOKE_HELPER(void, RhUnbox, (Object * pObj, void * pData, EEType * pUnbox
 
     // A special case is that we can unbox a value type T into a Nullable<T>. It's the only case where
     // pUnboxToEEType is useful.
-    ASSERT((pUnboxToEEType == NULL) || pEEType->IsEquivalentTo(pUnboxToEEType) || pUnboxToEEType->IsNullable());
+    ASSERT((pUnboxToEEType == NULL) || EETypesEquivalentEnoughForUnboxing(pEEType, pUnboxToEEType) || pUnboxToEEType->IsNullable());
     if (pUnboxToEEType && pUnboxToEEType->IsNullable())
     {
         ASSERT(pUnboxToEEType->GetNullableType()->IsEquivalentTo(pEEType));
 
         // Set the first field of the Nullable to true to indicate the value is present.
-        *(Boolean*)pData = TRUE;
+        *(Boolean*)pData = Boolean_true;
 
         // Adjust the data pointer so that it points at the value field in the Nullable.
         pData = (UInt8*)pData + pUnboxToEEType->GetNullableValueOffset();
     }
 
-    SIZE_T cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
-    SIZE_T cbFields = pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
+    size_t cbFieldPadding = pEEType->get_ValueTypeFieldPadding();
+    size_t cbFields = pEEType->get_BaseSize() - (sizeof(ObjHeader) + sizeof(EEType*) + cbFieldPadding);
     UInt8 * pbFields = (UInt8*)pObj + sizeof(EEType*);
 
-    // Copy the boxed fields into the new location.
-    memcpy(pData, pbFields, cbFields);
-
-    // Perform any write barriers necessary for embedded reference fields. SetCardsAfterBulkCopy doesn't range
-    // check the address we pass it and in this case we don't know whether pData really points into the GC
-    // heap or not. If we call it with an address outside of the GC range we could end up setting a card
-    // outside of the allocated range of the card table, i.e. corrupt memory.
-    if (pEEType->HasReferenceFields() && (pData >= g_lowest_address) && (pData < g_highest_address))
-        GCHeap::GetGCHeap()->SetCardsAfterBulkCopy((Object**)pData, cbFields);
+    if (pEEType->HasReferenceFields())
+    {
+        // Copy the boxed fields into the new location in a GC safe manner
+        GCSafeCopyMemoryWithWriteBarrier(pData, pbFields, cbFields);
+    }
+    else
+    {
+        // Copy the boxed fields into the new location.
+        memcpy(pData, pbFields, cbFields);
+    }
 }
 
-#endif
-
-//
-// -----------------------------------------------------------------------------------------------------------
-//
-// Support for shutdown finalization, which is off by default but can be enabled by the class library.
-//
-
-// If true runtime shutdown will attempt to finalize all finalizable objects (even those still rooted).
-bool g_fPerformShutdownFinalization = false;
-
-// Time to wait (in milliseconds) for the above finalization to complete before giving up and proceeding with
-// shutdown. Can specify INFINITE for no timeout. 
-UInt32 g_uiShutdownFinalizationTimeout = 0;
-
-// Flag set to true once we've begun shutdown (and before shutdown finalization begins). This is exported to
-// the class library so that managed code can tell when it is safe to access other objects from finalizers.
-bool g_fShutdownHasStarted = false;
-
-// If the class library has requested it, call this method on clean shutdown (i.e. return from Main) to
-// perform a final pass of finalization where all finalizable objects are processed regardless of whether
-// they are still rooted.
-// static
-void RedhawkGCInterface::ShutdownFinalization()
+Thread * GetThread()
 {
-    FinalizerThread::WatchDog();
+    return ThreadStore::GetCurrentThread();
 }
 
 // Thread static representing the last allocation.
 // This is used to log the type information for each slow allocation.
+DECLSPEC_THREAD
 EEType * RedhawkGCInterface::tls_pLastAllocationEEType = NULL;
 
 // Get the last allocation for this thread.
@@ -812,26 +965,23 @@ void RedhawkGCInterface::SetLastAllocEEType(EEType * pEEType)
     tls_pLastAllocationEEType = pEEType;
 }
 
-Thread * GetThread()
-{
-    return ThreadStore::GetCurrentThread();
-}
-
-void GCToEEInterface::SuspendEE(GCToEEInterface::SUSPEND_REASON reason)
+void GCToEEInterface::SuspendEE(SUSPEND_REASON reason)
 {
 #ifdef FEATURE_EVENT_TRACE
     ETW::GCLog::ETW_GC_INFO Info;
     Info.SuspendEE.Reason = reason;
     Info.SuspendEE.GcCount = (((reason == SUSPEND_FOR_GC) || (reason == SUSPEND_FOR_GC_PREP)) ?
-        (UInt32)GCHeap::GetGCHeap()->GetGcCount() : (UInt32)-1);
+        (UInt32)GCHeapUtilities::GetGCHeap()->GetGcCount() : (UInt32)-1);
 #endif // FEATURE_EVENT_TRACE
 
     FireEtwGCSuspendEEBegin_V1(Info.SuspendEE.Reason, Info.SuspendEE.GcCount, GetClrInstanceId());
 
-    g_TrapReturningThreads = TRUE;
-    GCHeap::GetGCHeap()->SetGCInProgress(TRUE);
+    g_SuspendEELock.Enter();
 
-    GetThreadStore()->SuspendAllThreads(GCHeap::GetGCHeap()->GetWaitForGCEvent());
+    g_TrapReturningThreads = TRUE;
+    GCHeapUtilities::GetGCHeap()->SetGCInProgress(TRUE);
+
+    GetThreadStore()->SuspendAllThreads(GCHeapUtilities::GetGCHeap()->GetWaitForGCEvent());
 
     FireEtwGCSuspendEEEnd_V1(GetClrInstanceId());
 
@@ -841,37 +991,30 @@ void GCToEEInterface::SuspendEE(GCToEEInterface::SUSPEND_REASON reason)
 #endif
 }
 
-void GCToEEInterface::RestartEE(bool bFinishedGC)
+void GCToEEInterface::RestartEE(bool /*bFinishedGC*/)
 {
     FireEtwGCRestartEEBegin_V1(GetClrInstanceId());
 
     SyncClean::CleanUp();
 
-    GetThreadStore()->ResumeAllThreads(GCHeap::GetGCHeap()->GetWaitForGCEvent());
-    GCHeap::GetGCHeap()->SetGCInProgress(FALSE);
+    GetThreadStore()->ResumeAllThreads(GCHeapUtilities::GetGCHeap()->GetWaitForGCEvent());
+    GCHeapUtilities::GetGCHeap()->SetGCInProgress(FALSE);
 
-    g_TrapReturningThreads = FALSE; // @TODO: map this to something meaningful in the new algorithm
+    g_TrapReturningThreads = FALSE;
+
+    g_SuspendEELock.Leave();
 
     FireEtwGCRestartEEEnd_V1(GetClrInstanceId());
 }
 
-void GCToEEInterface::ScanStackRoots(Thread * pThread, promote_func* fn, ScanContext* sc)
-{
-    // TODO: Implement - Scan stack roots on given thread
-}
-
-void GCToEEInterface::ScanStaticGCRefsOpportunistically(promote_func* fn, ScanContext* sc)
-{
-}
-
-void GCToEEInterface::GcStartWork(int condemned, int max_gen)
+void GCToEEInterface::GcStartWork(int condemned, int /*max_gen*/)
 {
     // Invoke any registered callouts for the start of the collection.
     RestrictedCallouts::InvokeGcCallouts(GCRC_StartCollection, condemned);
 }
 
 // EE can perform post stack scanning action, while the user threads are still suspended 
-void GCToEEInterface::AfterGcScanRoots(int condemned, int max_gen, ScanContext* sc)
+void GCToEEInterface::AfterGcScanRoots(int condemned, int /*max_gen*/, ScanContext* /*sc*/)
 {
     // Invoke any registered callouts for the end of the mark phase.
     RestrictedCallouts::InvokeGcCallouts(GCRC_AfterMarkPhase, condemned);
@@ -892,28 +1035,19 @@ bool GCToEEInterface::RefCountedHandleCallbacks(Object * pObject)
     return RestrictedCallouts::InvokeRefCountedHandleCallbacks(pObject);
 }
 
-// Thread functions
-bool GCToEEInterface::IsPreemptiveGCDisabled(Thread * pThread)
+void GCToEEInterface::SyncBlockCacheWeakPtrScan(HANDLESCANPROC /*scanProc*/, uintptr_t /*lp1*/, uintptr_t /*lp2*/)
 {
-    return pThread->PreemptiveGCDisabled();
 }
 
-void GCToEEInterface::EnablePreemptiveGC(Thread * pThread)
+void GCToEEInterface::SyncBlockCacheDemote(int /*max_gen*/)
 {
-    return pThread->EnablePreemptiveGC();
 }
 
-void GCToEEInterface::DisablePreemptiveGC(Thread * pThread)
+void GCToEEInterface::SyncBlockCachePromotionsGranted(int /*max_gen*/)
 {
-    pThread->DisablePreemptiveGC();
 }
 
-void GCToEEInterface::SetGCSpecial(Thread * pThread)
-{
-    pThread->SetGCSpecial(true);
-}
-
-alloc_context * GCToEEInterface::GetAllocContext(Thread * pThread)
+gc_alloc_context * GCToEEInterface::GetAllocContext(Thread * pThread)
 {
     return pThread->GetAllocContext();
 }
@@ -922,24 +1056,105 @@ bool GCToEEInterface::CatchAtSafePoint(Thread * pThread)
 {
     return pThread->CatchAtSafePoint();
 }
+#endif // !DACCESS_COMPILE
 
-// does not acquire thread store lock
-void GCToEEInterface::AttachCurrentThread()
+bool GCToEEInterface::IsPreemptiveGCDisabled(Thread * pThread)
 {
+    return pThread->IsCurrentThreadInCooperativeMode();
+}
+
+void GCToEEInterface::EnablePreemptiveGC(Thread * pThread)
+{
+#ifndef DACCESS_COMPILE
+    pThread->EnablePreemptiveMode();
+#else
+    UNREFERENCED_PARAMETER(pThread);
+#endif
+}
+
+void GCToEEInterface::DisablePreemptiveGC(Thread * pThread)
+{
+#ifndef DACCESS_COMPILE
+    pThread->DisablePreemptiveMode();
+#else
+    UNREFERENCED_PARAMETER(pThread);
+#endif
+}
+
+#ifndef DACCESS_COMPILE
+
+// Context passed to the above.
+struct GCBackgroundThreadContext
+{
+    GCBackgroundThreadFunction  m_pRealStartRoutine;
+    void *                      m_pRealContext;
+    Thread *                    m_pThread;
+    CLREventStatic              m_ThreadStartedEvent;
+};
+
+// Helper used to wrap the start routine of background GC threads so we can do things like initialize the
+// Redhawk thread state which requires running in the new thread's context.
+static uint32_t WINAPI BackgroundGCThreadStub(void * pContext)
+{
+    GCBackgroundThreadContext * pStartContext = (GCBackgroundThreadContext*)pContext;
+
+    // Initialize the Thread for this thread. The false being passed indicates that the thread store lock
+    // should not be acquired as part of this operation. This is necessary because this thread is created in
+    // the context of a garbage collection and the lock is already held by the GC.
+    ASSERT(GCHeapUtilities::IsGCInProgress());
     ThreadStore::AttachCurrentThread(false);
+
+    Thread * pThread = GetThread();
+    pThread->SetGCSpecial(true);
+
+    // Inform the GC which Thread* we are.
+    pStartContext->m_pThread = pThread;
+
+    GCBackgroundThreadFunction realStartRoutine = pStartContext->m_pRealStartRoutine;
+    void* realContext = pStartContext->m_pRealContext;
+
+    pStartContext->m_ThreadStartedEvent.Set();
+
+    STRESS_LOG_RESERVE_MEM (GC_STRESSLOG_MULTIPLY);
+
+    // Run the real start procedure and capture its return code on exit.
+    return realStartRoutine(realContext);
 }
 
-Thread * GCToEEInterface::GetThreadList(Thread * pThread)
+Thread* GCToEEInterface::CreateBackgroundThread(GCBackgroundThreadFunction threadStart, void* arg)
 {
-    ASSERT(!"Intentionally not implemented"); // not used on this runtime
-    return nullptr;
+    GCBackgroundThreadContext threadStubArgs;
+
+    threadStubArgs.m_pThread = NULL;
+    threadStubArgs.m_pRealStartRoutine = threadStart;
+    threadStubArgs.m_pRealContext = arg;
+
+    if (!threadStubArgs.m_ThreadStartedEvent.CreateAutoEventNoThrow(false))
+    {
+        return NULL;
+    }
+
+    if (!PalStartBackgroundGCThread(BackgroundGCThreadStub, &threadStubArgs))
+    {
+        threadStubArgs.m_ThreadStartedEvent.CloseEvent();
+        return NULL;
+    }
+
+    uint32_t res = threadStubArgs.m_ThreadStartedEvent.Wait(INFINITE, FALSE);
+    threadStubArgs.m_ThreadStartedEvent.CloseEvent();
+    ASSERT(res == WAIT_OBJECT_0);
+
+    ASSERT(threadStubArgs.m_pThread != NULL);
+    return threadStubArgs.m_pThread;
 }
 
+#endif // !DACCESS_COMPILE
 
-bool PalStartBackgroundGCThread(BackgroundCallback callback, void* pCallbackContext)
+// NOTE: this method is not in thread.cpp because it needs access to the layout of alloc_context for DAC to know the 
+// size, but thread.cpp doesn't generally need to include the GC environment headers for any other reason.
+gc_alloc_context * Thread::GetAllocContext()
 {
-    // TODO: Implement for background GC
-    return false;
+    return dac_cast<DPTR(gc_alloc_context)>(dac_cast<TADDR>(this) + offsetof(Thread, m_rgbAllocContextBuffer));
 }
 
 bool IsGCSpecialThread()
@@ -949,10 +1164,13 @@ bool IsGCSpecialThread()
 }
 
 #ifdef FEATURE_PREMORTEM_FINALIZATION
-Thread * g_pFinalizerThread = nullptr;
-CLREventStatic* hEventFinalizer = nullptr;
-CLREventStatic* hEventFinalizerDone = nullptr;
+GPTR_IMPL(Thread, g_pFinalizerThread);
+GPTR_IMPL(Thread, g_pGcThread);
 
+CLREventStatic g_FinalizerEvent;
+CLREventStatic g_FinalizerDoneEvent;
+
+#ifndef DACCESS_COMPILE
 // Finalizer method implemented by redhawkm.
 extern "C" void __cdecl ProcessFinalizers();
 
@@ -1005,12 +1223,12 @@ bool StartFinalizerThread()
     //
     static volatile Int32 fFinalizerThreadCreated;
 
-    if (FastInterlockExchange(&fFinalizerThreadCreated, 1) != 1)
+    if (Interlocked::Exchange(&fFinalizerThreadCreated, 1) != 1)
     {
-        if (!PalStartFinalizerThread(FinalizerStart, (void*)hEventFinalizer->GetOSEvent()))
+        if (!PalStartFinalizerThread(FinalizerStart, (void*)FinalizerThread::GetFinalizerEvent()))
         {
             // Need to try again another time...
-            FastInterlockExchange(&fFinalizerThreadCreated, 0);
+            Interlocked::Exchange(&fFinalizerThreadCreated, 0);
         }
     }
 
@@ -1023,7 +1241,7 @@ bool StartFinalizerThread()
     // If this isn't an app-local runtime, then the PAL will just call CreateThread directly, which should succeed
     // under normal circumstances.
     //
-    if (PalStartFinalizerThread(FinalizerStart, (void*)hEventFinalizer->GetOSEvent()))
+    if (PalStartFinalizerThread(FinalizerStart, (void*)FinalizerThread::GetFinalizerEvent()))
         return true;
     else
         return false;
@@ -1033,16 +1251,14 @@ bool StartFinalizerThread()
 
 bool FinalizerThread::Initialize()
 {
-    // Allocate the events the GC expects the finalizer thread to have. The hEventFinalizer event is signalled
+    // Allocate the events the GC expects the finalizer thread to have. The g_FinalizerEvent event is signalled
     // by the GC whenever it completes a collection where it found otherwise unreachable finalizable objects.
-    // The hEventFinalizerDone event is set by the finalizer thread every time it wakes up and drains the
-    // queue of finalizable objects. It's mainly used by GC.WaitForPendingFinalizers(). The
-    // hEventFinalizerToShutDown and hEventShutDownToFinalizer are used to synchronize the main thread and the
-    // finalizer during the optional final finalization pass at shutdown.
-    hEventFinalizerDone = new CLREventStatic();
-    hEventFinalizerDone->CreateManualEvent(FALSE);
-    hEventFinalizer = new CLREventStatic();
-    hEventFinalizer->CreateAutoEvent(FALSE);
+    // The g_FinalizerDoneEvent is set by the finalizer thread every time it wakes up and drains the
+    // queue of finalizable objects. It's mainly used by GC.WaitForPendingFinalizers().
+    if (!g_FinalizerEvent.CreateAutoEventNoThrow(false))
+        return false;
+    if (!g_FinalizerDoneEvent.CreateManualEventNoThrow(false))
+        return false;
 
     // Create the finalizer thread itself.
     if (!StartFinalizerThread())
@@ -1053,23 +1269,23 @@ bool FinalizerThread::Initialize()
 
 void FinalizerThread::SetFinalizerThread(Thread * pThread)
 {
-    g_pFinalizerThread = pThread;
+    g_pFinalizerThread = PTR_Thread(pThread);
 }
 
 void FinalizerThread::EnableFinalization()
 {
     // Signal to finalizer thread that there are objects to finalize
-    hEventFinalizer->Set();
+    g_FinalizerEvent.Set();
 }
 
-void FinalizerThread::SignalFinalizationDone(bool fFinalizer)
+void FinalizerThread::SignalFinalizationDone(bool /*fFinalizer*/)
 {
-    hEventFinalizerDone->Set();
+    g_FinalizerDoneEvent.Set();
 }
 
 bool FinalizerThread::HaveExtraWorkForFinalizer()
 {
-    return g_pFinalizerThread->HaveExtraWorkForFinalizer();
+    return false; // Nothing to do
 }
 
 bool FinalizerThread::IsCurrentThreadFinalizer()
@@ -1077,68 +1293,9 @@ bool FinalizerThread::IsCurrentThreadFinalizer()
     return GetThread() == g_pFinalizerThread;
 }
 
-
-// This is called during runtime shutdown to perform a final finalization run with all pontentially
-// finalizable objects being finalized (as if their roots had all been cleared). The default behaviour is to
-// skip this step, the classlib has to make an explicit request for this functionality and also specifies the
-// maximum amount of time it will let the finalization take before we will give up and just let the shutdown
-// proceed.
-bool FinalizerThread::WatchDog()
+HANDLE FinalizerThread::GetFinalizerEvent()
 {
-    // Set the flag indicating that shutdown has started. This is only of interest to managed code running
-    // finalizers as it lets them know when it is no longer safe to access other objects (which from this
-    // point on can be finalized even if you hold a reference to them).
-    g_fShutdownHasStarted = true;
-
-    if (g_fPerformShutdownFinalization)
-    {
-#ifdef BACKGROUND_GC
-        // Switch off concurrent GC if necessary.
-        gc_heap::gc_can_use_concurrent = FALSE;
-
-        if (pGenGCHeap->settings.concurrent)
-            pGenGCHeap->background_gc_wait();
-#endif //BACKGROUND_GC
-
-        DWORD dwTimeout = g_uiShutdownFinalizationTimeout;
-
-        // Wait for any outstanding finalization run to complete. Time this initial operation so that it forms
-        // part of the overall timeout budget.
-        DWORD dwStartTime = GetTickCount();
-        Wait(dwTimeout);
-        DWORD dwEndTime = GetTickCount();
-
-        // In the exceedingly rare case that the tick count wrapped then we'll just reset the timeout to its
-        // initial value. Otherwise we'll subtract the time we waited from the timeout budget (being mindful
-        // of the fact that we might have waited slightly longer than the timeout specified).
-        if (dwTimeout != INFINITE)
-        {
-            if (dwEndTime < dwStartTime)
-                dwTimeout = g_uiShutdownFinalizationTimeout;
-            else
-                dwTimeout -= min(dwTimeout, dwEndTime - dwStartTime);
-
-            if (dwTimeout == 0)
-                return false;
-        }
-
-        // Inform the GC that all finalizable objects should now be placed in the queue for finalization. FALSE
-        // here means we don't hold the finalizer lock (so the routine will take it for us).
-        GCHeap::GetGCHeap()->SetFinalizeQueueForShutdown(FALSE);
-
-        // Wait for the finalizer to process all of these objects.
-        Wait(dwTimeout);
-
-        if (dwTimeout == INFINITE)
-            return true;
-
-        // Do a zero timeout wait of the finalizer done event to determine if we timed out above (we don't
-        // want to modify the signature of GCHeap::FinalizerThreadWait to return this data since that bleeds
-        // into a CLR visible change to gc.h which is not really worth it for this minor case).
-        return hEventFinalizerDone->Wait(0, FALSE) == WAIT_OBJECT_0;
-    }
-
-    return true;
+    return g_FinalizerEvent.GetOSEvent();
 }
 
 void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
@@ -1148,7 +1305,7 @@ void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
     {
         // Clear any current indication that a finalization pass is finished and wake the finalizer thread up
         // (if there's no work to do it'll set the done event immediately).
-        hEventFinalizerDone->Reset();
+        g_FinalizerDoneEvent.Reset();
         EnableFinalization();
 
 #ifdef APP_LOCAL_RUNTIME
@@ -1158,8 +1315,113 @@ void FinalizerThread::Wait(DWORD timeout, bool allowReentrantWait)
 #endif
 
         // Wait for the finalizer thread to get back to us.
-        hEventFinalizerDone->Wait(timeout, false, allowReentrantWait);
+        g_FinalizerDoneEvent.Wait(timeout, false, allowReentrantWait);
+    }
+}
+#endif // !DACCESS_COMPILE
+#endif // FEATURE_PREMORTEM_FINALIZATION
+
+#ifndef DACCESS_COMPILE
+
+bool __SwitchToThread(uint32_t dwSleepMSec, uint32_t /*dwSwitchCount*/)
+{
+    if (dwSleepMSec > 0)
+    {
+        PalSleep(dwSleepMSec);
+        return true;
+    }
+    return !!PalSwitchToThread();
+}
+
+#endif // DACCESS_COMPILE
+
+MethodTable * g_pFreeObjectMethodTable;
+int32_t g_TrapReturningThreads;
+bool g_fFinalizerRunOnShutDown;
+
+void StompWriteBarrierEphemeral(bool /* isRuntimeSuspended */)
+{
+}
+
+void StompWriteBarrierResize(bool /* isRuntimeSuspended */, bool /*bReqUpperBoundsCheck*/)
+{
+}
+
+bool IsGCThread()
+{
+    return false;
+}
+
+void LogSpewAlways(const char * /*fmt*/, ...)
+{
+}
+
+uint32_t CLRConfig::GetConfigValue(ConfigDWORDInfo eType)
+{
+    switch (eType)
+    {
+    case UNSUPPORTED_BGCSpinCount:
+        return 140;
+
+    case UNSUPPORTED_BGCSpin:
+        return 2;
+
+    case UNSUPPORTED_GCLogEnabled:
+    case UNSUPPORTED_GCLogFile:
+    case UNSUPPORTED_GCLogFileSize:
+    case EXTERNAL_GCStressStart:
+    case INTERNAL_GCStressStartAtJit:
+    case INTERNAL_DbgDACSkipVerifyDlls:
+        return 0;
+
+    case Config_COUNT:
+    default:
+#ifdef _MSC_VER
+#pragma warning(suppress:4127) // Constant conditional expression in ASSERT below
+#endif
+        ASSERT(!"Unknown config value type");
+        return 0;
     }
 }
 
-#endif // FEATURE_PREMORTEM_FINALIZATION
+HRESULT CLRConfig::GetConfigValue(ConfigStringInfo /*eType*/, __out_z TCHAR * * outVal)
+{
+    *outVal = NULL;
+    return 0;
+}
+
+bool NumaNodeInfo::CanEnableGCNumaAware() 
+{ 
+    // @TODO: enable NUMA node support
+    return false; 
+}
+
+void NumaNodeInfo::GetGroupForProcessor(uint16_t /*processor_number*/, uint16_t * /*group_number*/, uint16_t * /*group_processor_number*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: NumaNodeInfo::GetGroupForProcessor");
+}
+
+bool NumaNodeInfo::GetNumaProcessorNodeEx(PPROCESSOR_NUMBER /*proc_no*/, uint16_t * /*node_no*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: NumaNodeInfo::GetNumaProcessorNodeEx");
+    return false;
+}
+
+bool CPUGroupInfo::CanEnableGCCPUGroups()
+{
+    // @TODO: enable CPU group support
+    return false;
+}
+
+uint32_t CPUGroupInfo::GetNumActiveProcessors() 
+{ 
+    // @TODO: enable CPU group support
+    // NOTE: this API shouldn't be called unless CanEnableGCCPUGroups() returns true
+    ASSERT_UNCONDITIONALLY("NYI: CPUGroupInfo::GetNumActiveProcessors");
+    return 0;
+}
+
+void CPUGroupInfo::GetGroupForProcessor(uint16_t /*processor_number*/, uint16_t * /*group_number*/, uint16_t * /*group_processor_number*/)
+{
+    ASSERT_UNCONDITIONALLY("NYI: CPUGroupInfo::GetGroupForProcessor");
+}
