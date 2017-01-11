@@ -76,7 +76,7 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        public unsafe static String PtrToStringAnsi(IntPtr ptr)
+        public static unsafe String PtrToStringAnsi(IntPtr ptr)
         {
             if (IntPtr.Zero == ptr)
             {
@@ -101,7 +101,7 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        public unsafe static String PtrToStringAnsi(IntPtr ptr, int len)
+        public static unsafe String PtrToStringAnsi(IntPtr ptr, int len)
         {
             if (ptr == IntPtr.Zero)
                 throw new ArgumentNullException(nameof(ptr));
@@ -111,7 +111,7 @@ namespace System.Runtime.InteropServices
             return ConvertToUnicode(ptr, len);
         }
 
-        public unsafe static String PtrToStringUni(IntPtr ptr, int len)
+        public static unsafe String PtrToStringUni(IntPtr ptr, int len)
         {
             if (ptr == IntPtr.Zero)
                 throw new ArgumentNullException(nameof(ptr));
@@ -121,7 +121,7 @@ namespace System.Runtime.InteropServices
             return new String((char*)ptr, 0, len);
         }
 
-        public unsafe static String PtrToStringUni(IntPtr ptr)
+        public static unsafe String PtrToStringUni(IntPtr ptr)
         {
             if (IntPtr.Zero == ptr)
             {
@@ -169,7 +169,7 @@ namespace System.Runtime.InteropServices
         {
             if (t == null)
                 throw new ArgumentNullException(nameof(t));
-            if (t.TypeHandle.IsGenericType())
+            if (t.TypeHandle.IsGenericType() || t.TypeHandle.IsGenericTypeDefinition())
                 throw new ArgumentException(SR.Argument_NeedNonGenericType, nameof(t));
             Contract.EndContractBlock();
 
@@ -207,7 +207,7 @@ namespace System.Runtime.InteropServices
             if (String.IsNullOrEmpty(fieldName))
                 throw new ArgumentNullException(nameof(fieldName));
 
-            if (t.TypeHandle.IsGenericType())
+            if (t.TypeHandle.IsGenericType() || t.TypeHandle.IsGenericTypeDefinition())
                 throw new ArgumentException(SR.Argument_NeedNonGenericType, nameof(t));
 
             Contract.EndContractBlock();
@@ -666,12 +666,12 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        public unsafe static IntPtr ReAllocHGlobal(IntPtr pv, IntPtr cb)
+        public static unsafe IntPtr ReAllocHGlobal(IntPtr pv, IntPtr cb)
         {
             return ExternalInterop.MemReAlloc(pv, cb);
         }
 
-        private unsafe static void ConvertToAnsi(string source, IntPtr pbNativeBuffer, int cbNativeBuffer)
+        private static unsafe void ConvertToAnsi(string source, IntPtr pbNativeBuffer, int cbNativeBuffer)
         {
             Debug.Assert(source != null);
             Debug.Assert(pbNativeBuffer != IntPtr.Zero);
@@ -685,7 +685,7 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        private unsafe static string ConvertToUnicode(IntPtr sourceBuffer, int cbSourceBuffer)
+        private static unsafe string ConvertToUnicode(IntPtr sourceBuffer, int cbSourceBuffer)
         {
             if (IsWin32Atom(sourceBuffer))
             {
@@ -766,7 +766,7 @@ namespace System.Runtime.InteropServices
         //====================================================================
         // String convertions.
         //====================================================================
-        public unsafe static IntPtr StringToHGlobalAnsi(String s)
+        public static unsafe IntPtr StringToHGlobalAnsi(String s)
         {
             if (s == null)
             {
@@ -786,7 +786,7 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        public unsafe static IntPtr StringToHGlobalUni(String s)
+        public static unsafe IntPtr StringToHGlobalUni(String s)
         {
             if (s == null)
             {
@@ -856,7 +856,7 @@ namespace System.Runtime.InteropServices
             return pNewMem;
         }
 
-        public unsafe static IntPtr StringToCoTaskMemUni(String s)
+        public static unsafe IntPtr StringToCoTaskMemUni(String s)
         {
             if (s == null)
             {
@@ -887,7 +887,7 @@ namespace System.Runtime.InteropServices
             }
         }
 
-        public unsafe static IntPtr StringToCoTaskMemAnsi(String s)
+        public static unsafe IntPtr StringToCoTaskMemAnsi(String s)
         {
             if (s == null)
             {
@@ -1208,7 +1208,7 @@ namespace System.Runtime.InteropServices
 
             RuntimeTypeHandle structureTypeHandle = structure.GetType().TypeHandle;
 
-            if (structureTypeHandle.IsGenericType())
+            if (structureTypeHandle.IsGenericType() || structureTypeHandle.IsGenericTypeDefinition())
             {
                 throw new ArgumentException(nameof(structure), SR.Argument_NeedNonGenericObject);
             }
@@ -1276,7 +1276,7 @@ namespace System.Runtime.InteropServices
 
             RuntimeTypeHandle structureTypeHandle = structuretype.TypeHandle;
 
-            if (structureTypeHandle.IsGenericType())
+            if (structureTypeHandle.IsGenericType() || structureTypeHandle.IsGenericTypeDefinition())
                 throw new ArgumentException(SR.Argument_NeedNonGenericType, "t");
 
             if (structureTypeHandle.IsEnum() ||
@@ -1357,7 +1357,7 @@ namespace System.Runtime.InteropServices
                 throw new ArgumentNullException(nameof(t));
             Contract.EndContractBlock();
 
-            if (t.TypeHandle.IsGenericType())
+            if (t.TypeHandle.IsGenericType() || t.TypeHandle.IsGenericTypeDefinition())
                 throw new ArgumentException(SR.Argument_NeedNonGenericType, nameof(t));
 
             bool isDelegateType = InteropExtensions.AreTypesAssignable(t.TypeHandle, typeof(MulticastDelegate).TypeHandle) ||
@@ -1384,7 +1384,7 @@ namespace System.Runtime.InteropServices
             if (pDstNativeVariant == IntPtr.Zero)
                 throw new ArgumentNullException("pSrcNativeVariant");
 
-            if (obj != null && obj.GetType().TypeHandle.IsGenericType())
+            if (obj != null && (obj.GetType().TypeHandle.IsGenericType() || obj.GetType().TypeHandle.IsGenericTypeDefinition()))
                 throw new ArgumentException(SR.Argument_NeedNonGenericObject, nameof(obj));
 
             Contract.EndContractBlock();

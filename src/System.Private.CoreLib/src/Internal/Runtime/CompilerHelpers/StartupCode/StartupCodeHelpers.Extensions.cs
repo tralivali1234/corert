@@ -11,7 +11,7 @@ using Debug = Internal.Runtime.CompilerHelpers.StartupDebug;
 
 namespace Internal.Runtime.CompilerHelpers
 {
-    partial class StartupCodeHelpers
+    internal partial class StartupCodeHelpers
     {
         internal static unsafe void InitializeCommandLineArgsW(int argc, char** argv)
         {
@@ -46,6 +46,19 @@ namespace Internal.Runtime.CompilerHelpers
             Array.Copy(args, 1, mainArgs, 0, mainArgs.Length);
 
             return mainArgs;
+        }
+
+        private static void SetLatchedExitCode(int exitCode)
+        {
+            EnvironmentAugments.ExitCode = exitCode;
+        }
+
+        // Shuts down the class library and returns the process exit code.
+        private static int Shutdown()
+        {
+            EnvironmentAugments.ShutdownCore();
+
+            return EnvironmentAugments.ExitCode;
         }
     }
 }

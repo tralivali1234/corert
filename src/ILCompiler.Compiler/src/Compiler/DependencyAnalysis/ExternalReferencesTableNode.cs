@@ -15,22 +15,25 @@ namespace ILCompiler.DependencyAnalysis
     internal sealed class ExternalReferencesTableNode : ObjectNode, ISymbolNode
     {
         private ObjectAndOffsetSymbolNode _endSymbol;
+        private string _blobName;
 
         private Dictionary<SymbolAndDelta, uint> _insertedSymbolsDictionary = new Dictionary<SymbolAndDelta, uint>();
         private List<SymbolAndDelta> _insertedSymbols = new List<SymbolAndDelta>();
 
-        public ExternalReferencesTableNode()
+        public ExternalReferencesTableNode(string blobName)
         {
-            _endSymbol = new ObjectAndOffsetSymbolNode(this, 0, this.GetMangledName() + "End");
+            _blobName = blobName;
+            _endSymbol = new ObjectAndOffsetSymbolNode(this, 0, "__external_" + blobName + "_references_End", true);
         }
 
         public ISymbolNode EndSymbol => _endSymbol;
 
         public void AppendMangledName(NameMangler nameMangler, Utf8StringBuilder sb)
         {
-            sb.Append(NodeFactory.CompilationUnitPrefix).Append("__external_references");
+            sb.Append(nameMangler.CompilationUnitPrefix).Append("__external_" + _blobName + "_references");
         }
         public int Offset => 0;
+        public override bool IsShareable => false;
 
         /// <summary>
         /// Adds a new entry to the table. Thread safety: not thread safe. Expected to be called at the final

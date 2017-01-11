@@ -504,7 +504,9 @@ namespace ILCompiler.DependencyAnalysis
 
         private static readonly string[][] s_helperEntrypointNames = new string[][] {
             new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnGCStaticBase" },
-            new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnNonGCStaticBase" }
+            new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnNonGCStaticBase" },
+            new string[] { "System.Runtime.CompilerServices", "ClassConstructorRunner", "CheckStaticClassConstructionReturnThreadStaticBase" },
+            new string[] { "Internal.Runtime", "ThreadStatics", "GetThreadStaticBaseForType" }
         };
 
         private ISymbolNode[] _helperEntrypointSymbols;
@@ -631,17 +633,6 @@ namespace ILCompiler.DependencyAnalysis
             return ReadOnlyDataBlob(symbolName, stringBytes, 1);
         }
 
-        public ISymbolNode ConstantUtf16String(string str)
-        {
-            int stringBytesCount = Encoding.Unicode.GetByteCount(str);
-            byte[] stringBytes = new byte[stringBytesCount + 2];
-            Encoding.Unicode.GetBytes(str, 0, str.Length, stringBytes, 0);
-
-            string symbolName = "__utf16str_" + NameMangler.GetMangledStringName(str);
-
-            return ReadOnlyDataBlob(symbolName, stringBytes, 2);
-        }
-
         /// <summary>
         /// Returns alternative symbol name that object writer should produce for given symbols
         /// in addition to the regular one.
@@ -655,22 +646,22 @@ namespace ILCompiler.DependencyAnalysis
         }
 
         public ArrayOfEmbeddedPointersNode<GCStaticsNode> GCStaticsRegion = new ArrayOfEmbeddedPointersNode<GCStaticsNode>(
-            CompilationUnitPrefix + "__GCStaticRegionStart", 
-            CompilationUnitPrefix + "__GCStaticRegionEnd", 
+            "__GCStaticRegionStart", 
+            "__GCStaticRegionEnd", 
             null);
         public ArrayOfEmbeddedDataNode ThreadStaticsRegion = new ArrayOfEmbeddedDataNode(
-            CompilationUnitPrefix + "__ThreadStaticRegionStart",
-            CompilationUnitPrefix + "__ThreadStaticRegionEnd", 
+            "__ThreadStaticRegionStart",
+            "__ThreadStaticRegionEnd", 
             null);
 
         public ArrayOfEmbeddedPointersNode<IMethodNode> EagerCctorTable = new ArrayOfEmbeddedPointersNode<IMethodNode>(
-            CompilationUnitPrefix + "__EagerCctorStart",
-            CompilationUnitPrefix + "__EagerCctorEnd",
+            "__EagerCctorStart",
+            "__EagerCctorEnd",
             new EagerConstructorComparer());
 
         public ArrayOfEmbeddedPointersNode<InterfaceDispatchMapNode> DispatchMapTable = new ArrayOfEmbeddedPointersNode<InterfaceDispatchMapNode>(
-            CompilationUnitPrefix + "__DispatchMapTableStart",
-            CompilationUnitPrefix + "__DispatchMapTableEnd",
+            "__DispatchMapTableStart",
+            "__DispatchMapTableEnd",
             null);
 
         public ArrayOfEmbeddedDataNode<FrozenStringNode> FrozenSegmentRegion = new ArrayOfFrozenObjectsNode<FrozenStringNode>(
@@ -685,7 +676,6 @@ namespace ILCompiler.DependencyAnalysis
         internal TypeManagerIndirectionNode TypeManagerIndirection = new TypeManagerIndirectionNode();
 
         public static NameMangler NameMangler;
-        public static string CompilationUnitPrefix = "";
 
         public virtual void AttachToDependencyGraph(DependencyAnalyzerBase<NodeFactory> graph)
         {
@@ -717,5 +707,7 @@ namespace ILCompiler.DependencyAnalysis
     {
         EnsureClassConstructorRunAndReturnGCStaticBase,
         EnsureClassConstructorRunAndReturnNonGCStaticBase,
+        EnsureClassConstructorRunAndReturnThreadStaticBase,
+        GetThreadStaticBaseForType,
     }
 }

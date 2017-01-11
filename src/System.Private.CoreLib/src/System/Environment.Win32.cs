@@ -6,7 +6,7 @@ namespace System
 {
     public static partial class Environment
     {
-        public unsafe static String GetEnvironmentVariable(String variable)
+        public static unsafe String GetEnvironmentVariable(String variable)
         {
             if (variable == null)
                 throw new ArgumentNullException(nameof(variable));
@@ -57,12 +57,6 @@ namespace System
             Diagnostics.Debug.Assert(newblob != null);
 
             return new string(newblob);
-        }
-
-        public static void Exit(int exitCode)
-        {
-            // CORERT-TODO: Shut down the runtime
-            Interop.mincore.ExitProcess(exitCode);
         }
     }
 }

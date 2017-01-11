@@ -40,6 +40,8 @@ namespace ILCompiler.DependencyAnalysis
                     return factory.GenericLookup.MethodDictionary((MethodDesc)target);
                 case ReadyToRunHelperId.VirtualCall:
                     return factory.GenericLookup.VirtualCall((MethodDesc)target);
+                case ReadyToRunHelperId.ResolveVirtualFunction:
+                    return factory.GenericLookup.VirtualMethodAddress((MethodDesc)target);
                 case ReadyToRunHelperId.MethodEntry:
                     return factory.GenericLookup.MethodEntry((MethodDesc)target);
                 default:
@@ -48,11 +50,7 @@ namespace ILCompiler.DependencyAnalysis
         }
 
         protected sealed override string GetName() => this.GetMangledName();
-
-        public sealed override bool ShouldShareNodeAcrossModules(NodeFactory factory)
-        {
-            return true;
-        }
+        public override bool IsShareable => true;
 
         protected sealed override void OnMarked(NodeFactory factory)
         {

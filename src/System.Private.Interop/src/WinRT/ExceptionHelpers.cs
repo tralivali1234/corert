@@ -1,11 +1,15 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
+#if !CORECLR
+extern alias CoreFX_IO;
+#endif
 
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
+using Internal.Runtime;
 using Internal.Runtime.Augments;
 
 namespace System.Runtime.InteropServices
@@ -13,7 +17,7 @@ namespace System.Runtime.InteropServices
     /// <summary>
     /// This class has all the helpers which are needed to provide the Exception support for WinRT and ClassicCOM
     /// </summary>
-    public unsafe static partial class ExceptionHelpers
+    public static unsafe partial class ExceptionHelpers
     {
         /// <summary>
         ///  This class is a helper class to call into IRestrictedErrorInfo methods.
@@ -332,7 +336,7 @@ namespace System.Runtime.InteropServices
                     break; // DuplicateWaitObjectException
                 case __HResults.COR_E_ENDOFSTREAM:
                 case unchecked((int)0x800A003E):
-                    exception = new System.IO.EndOfStreamException();
+                    exception = new CoreFX_IO::System.IO.EndOfStreamException();
 
                     if (errorCode != __HResults.COR_E_ENDOFSTREAM)
                         shouldDisplayHR = true;
@@ -699,7 +703,7 @@ namespace System.Runtime.InteropServices
                 //
 
                 // TODO: Add Symbolic Name into Messaage, convert 0x80020006 to DISP_E_UNKNOWNNAME
-                string hrMessage = String.Format("{0} 0x{1:X}", SR.Excep_FromHResult, errorCode);
+                string hrMessage = String.Format("{0} 0x{1}", SR.Excep_FromHResult, errorCode.LowLevelToString());
 
                 message = ExternalInterop.GetMessage(errorCode);
 

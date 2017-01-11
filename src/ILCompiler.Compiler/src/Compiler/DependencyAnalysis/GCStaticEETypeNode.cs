@@ -57,11 +57,7 @@ namespace ILCompiler.DependencyAnalysis
                 return numSeries > 0 ? ((numSeries * 2) + 1) * _target.PointerSize : 0;
             }
         }
-
-        public override bool ShouldShareNodeAcrossModules(NodeFactory factory)
-        {
-            return true;
-        }
+        public override bool IsShareable => true;
 
         public override ObjectData GetData(NodeFactory factory, bool relocsOnly)
         {
@@ -95,8 +91,8 @@ namespace ILCompiler.DependencyAnalysis
             totalSize = Math.Max(totalSize, _target.PointerSize * 3); // minimum GC eetype size is 3 pointers
             dataBuilder.EmitInt(totalSize);
 
-            // This is just so that EEType::Validate doesn't blow up at runtime
-            dataBuilder.EmitPointerReloc(this); // Related type: itself
+            // Related type: System.Object. This allows storing an instance of this type in an array of objects.
+            dataBuilder.EmitPointerReloc(factory.NecessaryTypeSymbol(factory.TypeSystemContext.GetWellKnownType(WellKnownType.Object)));
 
             return dataBuilder.ToObjectData();
         }

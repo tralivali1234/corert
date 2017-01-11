@@ -15,6 +15,7 @@ namespace ILCompiler
         private MethodDesc _method;
 
         public SingleMethodCompilationModuleGroup(MethodDesc method)
+            : base(method.Context)
         {
             _method = method;
         }
@@ -40,16 +41,6 @@ namespace ILCompiler
         public override bool ShouldProduceFullType(TypeDesc type)
         {
             return false;
-        }
-
-        public override bool ShouldShareAcrossModules(MethodDesc method)
-        {
-            return true;
-        }
-
-        public override bool ShouldShareAcrossModules(TypeDesc type)
-        {
-            return true;
         }
 
         public override bool ShouldReferenceThroughImportTable(TypeDesc type)

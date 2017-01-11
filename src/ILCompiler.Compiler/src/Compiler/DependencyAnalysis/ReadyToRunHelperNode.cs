@@ -7,6 +7,8 @@ using System;
 using Internal.Text;
 using Internal.TypeSystem;
 
+using Debug = System.Diagnostics.Debug;
+
 namespace ILCompiler.DependencyAnalysis
 {
     public enum ReadyToRunHelperId
@@ -61,6 +63,8 @@ namespace ILCompiler.DependencyAnalysis
                         // and (depending on the policy), we could avoid scraping the entire compilation.
                         TypeDesc type = (TypeDesc)target;
                         factory.NecessaryTypeSymbol(type);
+
+                        Debug.Assert(!type.IsNullable, "Nullable needs to be unwrapped");
                     }
                     break;
                 case ReadyToRunHelperId.GetNonGCStaticBase:
@@ -135,10 +139,7 @@ namespace ILCompiler.DependencyAnalysis
             }
         }
 
-        public override bool ShouldShareNodeAcrossModules(NodeFactory factory)
-        {
-            return true;
-        }
+        public override bool IsShareable => true;
 
         protected override DependencyList ComputeNonRelocationBasedDependencies(NodeFactory factory)
         {
@@ -153,6 +154,12 @@ namespace ILCompiler.DependencyAnalysis
             {
                 DependencyList dependencyList = new DependencyList();
                 dependencyList.Add(factory.VirtualMethodUse((MethodDesc)_target), "ReadyToRun Virtual Method Address Load");
+                return dependencyList;
+            }
+            else if (_id == ReadyToRunHelperId.GetThreadStaticBase)
+            {
+                DependencyList dependencyList = new DependencyList();
+                dependencyList.Add(factory.TypeThreadStaticsSymbol((MetadataType)_target), "ReadyToRun Thread Static Storage");
                 return dependencyList;
             }
             else

@@ -806,7 +806,7 @@ namespace System.Runtime.InteropServices
         /// </summary>
         static Lock s_ccwLookupMapLock;
 
-        static internal void InitializeStatics()
+        internal static void InitializeStatics()
         {
             const int CCWLookupMapDefaultSize = 101;
 
@@ -1081,7 +1081,7 @@ namespace System.Runtime.InteropServices
 
 #region RefCounted handle support
 
-        static internal void InitRefCountedHandleCallback()
+        internal static void InitRefCountedHandleCallback()
         {
             // TODO: <https://github.com/dotnet/corert/issues/1596>
 #if !CORERT
@@ -1492,7 +1492,13 @@ namespace System.Runtime.InteropServices
             //
             foreach(RuntimeTypeHandle implementedInterface in ccwType.GetImplementedInterfaces())
             {
-                Debug.Assert(!implementedInterface.IsInvalid());
+                // DR may reduce a type away
+                // The root cause is that there are mismatch between DR's necessary Types and Mcg analysis Result's necessary Types
+                if (implementedInterface.IsInvalid())
+                {
+                    continue;
+                }
+
                 bool match = false;
                 if (interfaceType.IsNull())
                 {

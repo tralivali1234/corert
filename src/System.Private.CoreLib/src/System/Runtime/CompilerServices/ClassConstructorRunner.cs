@@ -8,6 +8,9 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
+using Internal.Runtime;
+using Internal.Runtime.CompilerHelpers;
+
 namespace System.Runtime.CompilerServices
 {
     // Marked [EagerStaticClassConstruction] because Cctor.GetCctor
@@ -38,16 +41,23 @@ namespace System.Runtime.CompilerServices
             return returnValue;
         }
 #else
-        private unsafe static object CheckStaticClassConstructionReturnGCStaticBase(StaticClassConstructionContext* context, object gcStaticBase)
+        private static unsafe object CheckStaticClassConstructionReturnGCStaticBase(StaticClassConstructionContext* context, object gcStaticBase)
         {
             EnsureClassConstructorRun(context);
             return gcStaticBase;
         }
 
-        private unsafe static IntPtr CheckStaticClassConstructionReturnNonGCStaticBase(StaticClassConstructionContext* context, IntPtr nonGcStaticBase)
+        private static unsafe IntPtr CheckStaticClassConstructionReturnNonGCStaticBase(StaticClassConstructionContext* context, IntPtr nonGcStaticBase)
         {
             EnsureClassConstructorRun(context);
             return nonGcStaticBase;
+        }
+
+        private unsafe static object CheckStaticClassConstructionReturnThreadStaticBase(TypeManagerSlot* pModuleData, Int32 typeTlsIndex, StaticClassConstructionContext* context)
+        {
+            object threadStaticBase = ThreadStatics.GetThreadStaticBaseForType(pModuleData, typeTlsIndex);
+            EnsureClassConstructorRun(context);
+            return threadStaticBase;
         }
 #endif
 
@@ -494,22 +504,22 @@ namespace System.Runtime.CompilerServices
         // We cannot utilize any of the typical number formatting code because it triggers globalization code to run 
         // and this cctor code is layered below globalization.
 #if DEBUG
-        static string ToHexString(int num)
+        private static string ToHexString(int num)
         {
             return ToHexStringUnsignedLong((ulong)num, false, 8);
         }
-        static string ToHexString(IntPtr num)
+        private static string ToHexString(IntPtr num)
         {
             return ToHexStringUnsignedLong((ulong)num, false, 16);
         }
-        static char GetHexChar(uint u)
+        private static char GetHexChar(uint u)
         {
             if (u < 10)
                 return unchecked((char)('0' + u));
 
             return unchecked((char)('a' + (u - 10)));
         }
-        static public unsafe string ToHexStringUnsignedLong(ulong u, bool zeroPrepad, int numChars)
+        public static unsafe string ToHexStringUnsignedLong(ulong u, bool zeroPrepad, int numChars)
         {
             char[] chars = new char[numChars];
 

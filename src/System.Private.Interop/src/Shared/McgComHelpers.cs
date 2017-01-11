@@ -203,7 +203,7 @@ namespace System.Runtime.InteropServices
 #if !RHTESTCL
         [MethodImplAttribute(MethodImplOptions.AggressiveInlining)]
 #endif
-        static internal void* CachedAlloc(int size, ref IntPtr cache)
+        internal static void* CachedAlloc(int size, ref IntPtr cache)
         {
             // Read cache, clear it
             void* pBlock = (void*)Interlocked.Exchange(ref cache, default(IntPtr));
@@ -222,7 +222,7 @@ namespace System.Runtime.InteropServices
 #if !RHTESTCL
         [MethodImplAttribute(MethodImplOptions.AggressiveInlining)]
 #endif
-        static internal void CachedFree(void* block, ref IntPtr cache)
+        internal static void CachedFree(void* block, ref IntPtr cache)
         {
             if ((void*)Interlocked.CompareExchange(ref cache, new IntPtr(block), default(IntPtr)) != null)
             {
@@ -620,7 +620,7 @@ namespace System.Runtime.InteropServices
         internal static __ComGenericInterfaceDispatcher CreateGenericComDispatcher(RuntimeTypeHandle genericDispatcherDef, RuntimeTypeHandle[] genericArguments, __ComObject comThisPointer)
         {
 #if !RHTESTCL && !CORECLR && !CORERT
-            Debug.Assert(Internal.Runtime.Augments.RuntimeAugments.IsGenericTypeDefinition(genericDispatcherDef));
+            Debug.Assert(genericDispatcherDef.IsGenericTypeDefinition());
             Debug.Assert(genericArguments != null && genericArguments.Length > 0);
 
             RuntimeTypeHandle instantiatedDispatcherType;
@@ -745,7 +745,7 @@ namespace System.Runtime.InteropServices
         }
 
 
-        internal unsafe static IntPtr ObjectToComInterfaceInternal(Object obj, RuntimeTypeHandle typeHnd)
+        internal static unsafe IntPtr ObjectToComInterfaceInternal(Object obj, RuntimeTypeHandle typeHnd)
         {
             if (obj == null)
                 return default(IntPtr);

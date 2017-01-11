@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -9,8 +10,12 @@ using ILCompiler.DependencyAnalysis;
 using ILCompiler.DependencyAnalysisFramework;
 
 using Internal.IL;
+using Internal.IL.Stubs;
 using Internal.TypeSystem;
 using Internal.TypeSystem.Ecma;
+
+using Debug = System.Diagnostics.Debug;
+using AssemblyName = System.Reflection.AssemblyName;
 
 namespace ILCompiler
 {
@@ -25,6 +30,9 @@ namespace ILCompiler
         internal NodeFactory NodeFactory => _nodeFactory;
         internal CompilerTypeSystemContext TypeSystemContext => NodeFactory.TypeSystemContext;
         internal Logger Logger => _logger;
+        internal PInvokeILProvider PInvokeILProvider { get; }
+
+        private readonly TypeGetTypeMethodThunkCache _typeGetTypeMethodThunks;
 
         protected Compilation(
             DependencyAnalyzerBase<NodeFactory> dependencyGraph,
@@ -47,15 +55,29 @@ namespace ILCompiler
             var rootingService = new RootingServiceProvider(dependencyGraph, nodeFactory);
             foreach (var rootProvider in compilationRoots)
                 rootProvider.AddCompilationRoots(rootingService);
+
+            _typeGetTypeMethodThunks = new TypeGetTypeMethodThunkCache(nodeFactory.CompilationModuleGroup.GeneratedAssembly.GetGlobalModuleType());
+
+            bool? forceLazyPInvokeResolution = null;
+            // TODO: Workaround lazy PInvoke resolution not working with CppCodeGen yet
+            // https://github.com/dotnet/corert/issues/2454
+            // https://github.com/dotnet/corert/issues/2149
+            if (this is CppCodegenCompilation) forceLazyPInvokeResolution = false;
+            // TODO: Workaround missing PInvokes with multifile compilation
+            // https://github.com/dotnet/corert/issues/2454
+            if (!nodeFactory.CompilationModuleGroup.IsSingleFileCompilation) forceLazyPInvokeResolution = true;
+            PInvokeILProvider = new PInvokeILProvider(new PInvokeILEmitterConfiguration(forceLazyPInvokeResolution));
+
+            _methodILCache = new ILProvider(PInvokeILProvider);
         }
 
-        private ILProvider _methodILCache = new ILProvider();
-
+        private ILProvider _methodILCache;
+        
         internal MethodIL GetMethodIL(MethodDesc method)
         {
             // Flush the cache when it grows too big
             if (_methodILCache.Count > 1000)
-                _methodILCache = new ILProvider();
+                _methodILCache = new ILProvider(PInvokeILProvider);
 
             return _methodILCache.GetMethodIL(method);
         }
@@ -101,23 +123,44 @@ namespace ILCompiler
             return methodIL.GetDebugInfo();
         }
 
+        /// <summary>
+        /// Resolves a reference to an intrinsic method to a new method that takes it's place in the compilation.
+        /// This is used for intrinsics where the intrinsic expansion depends on the callsite.
+        /// </summary>
+        /// <param name="intrinsicMethod">The intrinsic method called.</param>
+        /// <param name="callsiteMethod">The callsite that calls the intrinsic.</param>
+        /// <returns>The intrinsic implementation to be called for this specific callsite.</returns>
+        public MethodDesc ExpandIntrinsicForCallsite(MethodDesc intrinsicMethod, MethodDesc callsiteMethod)
+        {
+            Debug.Assert(intrinsicMethod.IsIntrinsic);
+
+            var intrinsicOwningType = intrinsicMethod.OwningType as MetadataType;
+            if (intrinsicOwningType == null)
+                return intrinsicMethod;
+
+            if (intrinsicOwningType.Module != TypeSystemContext.SystemModule)
+                return intrinsicMethod;
+
+            if (intrinsicOwningType.Name == "Type" && intrinsicOwningType.Namespace == "System")
+            {
+                if (intrinsicMethod.Signature.IsStatic && intrinsicMethod.Name == "GetType")
+                {
+                    ModuleDesc callsiteModule = (callsiteMethod.OwningType as MetadataType)?.Module;
+                    if (callsiteModule != null)
+                    {
+                        Debug.Assert(callsiteModule is IAssemblyDesc, "Multi-module assemblies");
+                        return _typeGetTypeMethodThunks.GetHelper(intrinsicMethod, ((IAssemblyDesc)callsiteModule).GetName().FullName);
+                    }
+                }
+            }
+
+            return intrinsicMethod;
+        }
+
         void ICompilation.Compile(string outputFile)
         {
-            // TODO: Hacky static field
-
-            string systemModuleName = ((IAssemblyDesc)NodeFactory.TypeSystemContext.SystemModule).GetName().Name;
-
-            // TODO: CompilationUnitPrefix is used even before this point!!!
-            // TODO: just something to get Runtime.Base compiled
-            if (systemModuleName != "System.Private.CoreLib")
-            {
-                NodeFactory.CompilationUnitPrefix = systemModuleName.Replace(".", "_");
-            }
-            else
-            {
-                NodeFactory.CompilationUnitPrefix = NameMangler.SanitizeName(Path.GetFileNameWithoutExtension(outputFile));
-            }
-
+            // In multi-module builds, set the compilation unit prefix to prevent ambiguous symbols in linked object files
+            _nameMangler.CompilationUnitPrefix = _nodeFactory.CompilationModuleGroup.IsSingleFileCompilation ? "" : NodeFactory.NameMangler.SanitizeName(Path.GetFileNameWithoutExtension(outputFile));
             CompileInternal(outputFile);
         }
 
@@ -154,9 +197,20 @@ namespace ILCompiler
             public void AddCompilationRoot(TypeDesc type, string reason)
             {
                 if (type.IsGenericDefinition)
+                {
                     _graph.AddRoot(_factory.NecessaryTypeSymbol(type), reason);
+                }
                 else
+                {
                     _graph.AddRoot(_factory.ConstructedTypeSymbol(type), reason);
+
+                    // If the type has a thread static field then we should eagerly create a helper
+                    // to access such fields at runtime. This is required for multi-module compilation.
+                    if (type.IsDefType && (((DefType)type).ThreadStaticFieldSize > 0))
+                    {
+                        _graph.AddRoot(_factory.ReadyToRunHelper(ReadyToRunHelperId.GetThreadStaticBase, (MetadataType)type), reason);
+                    }
+                }
             }
         }
     }

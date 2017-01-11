@@ -56,12 +56,6 @@ inline UInt32 PalEventWrite(REGHANDLE arg1, const EVENT_DESCRIPTOR * arg2, UInt3
     return EventWrite(arg1, arg2, arg3, arg4);
 }
 
-extern "C" void __stdcall ExitProcess(UInt32);
-inline void PalExitProcess(UInt32 arg1)
-{
-    ExitProcess(arg1);
-}
-
 extern "C" void __stdcall FlushProcessWriteBuffers();
 inline void PalFlushProcessWriteBuffers()
 {
@@ -99,12 +93,6 @@ inline UInt32 PalGetEnvironmentVariable(__in_z_opt LPCSTR arg1, __out_z_opt LPST
     return GetEnvironmentVariableA(arg1, arg2, arg3);
 }
 #endif
-
-extern "C" UInt32 __stdcall GetLastError();
-inline UInt32 PalGetLastError()
-{
-    return GetLastError();
-}
 
 extern "C" void * __stdcall GetProcAddress(HANDLE, const char *);
 inline void * PalGetProcAddress(HANDLE arg1, const char * arg2)

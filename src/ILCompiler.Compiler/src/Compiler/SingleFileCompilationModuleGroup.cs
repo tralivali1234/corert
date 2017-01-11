@@ -8,6 +8,11 @@ namespace ILCompiler
 {
     public class SingleFileCompilationModuleGroup : CompilationModuleGroup
     {
+        public SingleFileCompilationModuleGroup(TypeSystemContext context)
+            : base(context)
+        {
+        }
+
         public override bool ContainsType(TypeDesc type)
         {
             return true;
@@ -24,16 +29,6 @@ namespace ILCompiler
             {
                 return true;
             }
-        }
-
-        public override bool ShouldShareAcrossModules(MethodDesc method)
-        {
-            return false;
-        }
-
-        public override bool ShouldShareAcrossModules(TypeDesc type)
-        {
-            return false;
         }
 
         public override bool ShouldProduceFullType(TypeDesc type)

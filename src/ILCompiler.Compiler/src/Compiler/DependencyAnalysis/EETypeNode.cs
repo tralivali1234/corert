@@ -109,12 +109,7 @@ namespace ILCompiler.DependencyAnalysis
         {
             return _optionalFieldsBuilder.GetBytes();
         }
-
-        public override bool ShouldShareNodeAcrossModules(NodeFactory factory)
-        {
-            return factory.CompilationModuleGroup.ShouldShareAcrossModules(_type);
-        }
-
+        
         public override bool StaticDependenciesAreComputed => true;
 
         public void SetDispatchMapIndex(int index)
@@ -127,6 +122,12 @@ namespace ILCompiler.DependencyAnalysis
             sb.Append("__EEType_").Append(nameMangler.GetMangledTypeName(_type));
         }
         public int Offset => GCDescSize;
+        public override bool IsShareable => IsTypeNodeShareable(_type);
+
+        public static bool IsTypeNodeShareable(TypeDesc type)
+        {
+            return type.IsParameterizedType || type.IsFunctionPointer || type is InstantiatedType;
+        }
 
         protected override DependencyList ComputeNonRelocationBasedDependencies(NodeFactory factory)
         {
@@ -569,6 +570,8 @@ namespace ILCompiler.DependencyAnalysis
                     // TODO: validate constraints
                 }
 
+                // Check the type doesn't have bogus MethodImpls or overrides and we can get the finalizer.
+                defType.GetFinalizer();
             }
 
             // Validate parameterized types
@@ -593,6 +596,11 @@ namespace ILCompiler.DependencyAnalysis
                     {
                         // Element size over 64k can't be encoded in the GCDesc
                         throw new TypeSystemException.TypeLoadException(ExceptionStringID.ClassLoadValueClassTooLarge, parameterType);
+                    }
+
+                    if (((ArrayType)parameterizedType).Rank > 32)
+                    {
+                        throw new TypeSystemException.TypeLoadException(ExceptionStringID.ClassLoadRankTooLarge, type);
                     }
                 }
 

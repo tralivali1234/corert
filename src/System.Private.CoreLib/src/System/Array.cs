@@ -83,6 +83,52 @@ namespace System
             return CreateSzArray(elementType, length);
         }
 
+        public static unsafe Array CreateInstance(Type elementType, int length1, int length2)
+        {
+            if ((object)elementType == null)
+                throw new ArgumentNullException(nameof(elementType));
+            if (length1 < 0)
+                throw new ArgumentOutOfRangeException(nameof(length1));
+            if (length2 < 0)
+                throw new ArgumentOutOfRangeException(nameof(length2));
+
+            Contract.Ensures(Contract.Result<Array>() != null);
+            Contract.Ensures(Contract.Result<Array>().Rank == 2);
+            Contract.Ensures(Contract.Result<Array>().GetLength(0) == length1);
+            Contract.Ensures(Contract.Result<Array>().GetLength(1) == length2);
+
+            Type arrayType = GetArrayTypeFromElementType(elementType, true, 2);
+            int* pLengths = stackalloc int[2];
+            pLengths[0] = length1;
+            pLengths[1] = length2;
+            return NewMultiDimArray(arrayType.TypeHandle.ToEETypePtr(), pLengths, 2);
+        }
+
+        public static unsafe Array CreateInstance(Type elementType, int length1, int length2, int length3)
+        {
+            if ((object)elementType == null)
+                throw new ArgumentNullException(nameof(elementType));
+            if (length1 < 0)
+                throw new ArgumentOutOfRangeException(nameof(length1));
+            if (length2 < 0)
+                throw new ArgumentOutOfRangeException(nameof(length2));
+            if (length3 < 0)
+                throw new ArgumentOutOfRangeException(nameof(length3));
+
+            Contract.Ensures(Contract.Result<Array>() != null);
+            Contract.Ensures(Contract.Result<Array>().Rank == 3);
+            Contract.Ensures(Contract.Result<Array>().GetLength(0) == length1);
+            Contract.Ensures(Contract.Result<Array>().GetLength(1) == length2);
+            Contract.Ensures(Contract.Result<Array>().GetLength(2) == length3);
+
+            Type arrayType = GetArrayTypeFromElementType(elementType, true, 3);
+            int* pLengths = stackalloc int[3];
+            pLengths[0] = length1;
+            pLengths[1] = length2;
+            pLengths[2] = length3;
+            return NewMultiDimArray(arrayType.TypeHandle.ToEETypePtr(), pLengths, 3);
+        }
+
         public static Array CreateInstance(Type elementType, params int[] lengths)
         {
             if ((object)elementType == null)
@@ -186,7 +232,7 @@ namespace System
         // If you use C#'s 'fixed' statement to get the address of m_pEEType, you want to pass it into this
         // function to get the address of the first field.  NOTE: If you use GetAddrOfPinnedObject instead,
         // C# may optimize away the pinned local, producing incorrect results.
-        static internal unsafe byte* GetAddrOfPinnedArrayFromEETypeField(IntPtr* ppEEType)
+        internal static unsafe byte* GetAddrOfPinnedArrayFromEETypeField(IntPtr* ppEEType)
         {
             // -POINTER_SIZE to account for the sync block
             return (byte*)ppEEType + new EETypePtr(*ppEEType).BaseSize - POINTER_SIZE;
@@ -212,7 +258,8 @@ namespace System
 
         public static ReadOnlyCollection<T> AsReadOnly<T>(T[] array)
         {
-            if (array == null) {
+            if (array == null)
+            {
                 throw new ArgumentNullException(nameof(array));
             }
 
@@ -892,7 +939,7 @@ namespace System
         }
 
         // Allocate new multidimensional array of given dimensions. Assumes that that pLengths is immutable.
-        internal unsafe static Array NewMultiDimArray(EETypePtr eeType, int * pLengths, int rank)
+        internal static unsafe Array NewMultiDimArray(EETypePtr eeType, int* pLengths, int rank)
         {
             Debug.Assert(eeType.IsArray && !eeType.IsSzArray);
             Debug.Assert(rank == eeType.ArrayRank);
@@ -1415,7 +1462,7 @@ namespace System
 
         private static bool StructOnlyEquals<T>(T left, T right)
         {
-           return left.Equals(right);
+            return left.Equals(right);
         }
 
         /// <summary>
@@ -1941,23 +1988,7 @@ namespace System
                 throw new ArgumentNullException(nameof(comparison));
             }
 
-            IComparer<T> comparer = new FunctorComparer<T>(comparison);
-            Array.Sort(array, comparer);
-        }
-
-        internal sealed class FunctorComparer<T> : IComparer<T>
-        {
-            private Comparison<T> _comparison;
-
-            public FunctorComparer(Comparison<T> comparison)
-            {
-                _comparison = comparison;
-            }
-
-            public int Compare(T x, T y)
-            {
-                return _comparison(x, y);
-            }
+            ArraySortHelper<T>.Sort(array, 0, array.Length, comparison);
         }
 
         public static void Sort<TKey, TValue>(TKey[] keys, TValue[] items)
@@ -2028,6 +2059,42 @@ namespace System
         public static bool Exists<T>(T[] array, Predicate<T> match)
         {
             return Array.FindIndex(array, match) != -1;
+        }
+
+        public static void Fill<T>(T[] array, T value)
+        {
+            if (array == null)
+            {
+                throw new ArgumentNullException(nameof(array));
+            }
+
+            for (int i = 0; i < array.Length; i++)
+            {
+                array[i] = value;
+            }
+        }
+
+        public static void Fill<T>(T[] array, T value, int startIndex, int count)
+        {
+            if (array == null)
+            {
+                throw new ArgumentNullException(nameof(array));
+            }
+
+            if (startIndex < 0 || startIndex > array.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(startIndex), SR.ArgumentOutOfRange_Index);
+            }
+
+            if (count < 0 || startIndex > array.Length - count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count), SR.ArgumentOutOfRange_Count);
+            }
+
+            for (int i = startIndex; i < startIndex + count; i++)
+            {
+                array[i] = value;
+            }
         }
 
         public static T Find<T>(T[] array, Predicate<T> match)
@@ -2300,6 +2367,31 @@ namespace System
             return GetValueWithFlattenedIndex_NoErrorCheck(index);
         }
 
+        public unsafe Object GetValue(int index1, int index2)
+        {
+            if (Rank != 2)
+                throw new ArgumentException(SR.Arg_Need2DArray);
+            Contract.EndContractBlock();
+
+            int* pIndices = stackalloc int[2];
+            pIndices[0] = index1;
+            pIndices[1] = index2;
+            return GetValue(pIndices, 2);
+        }
+
+        public unsafe Object GetValue(int index1, int index2, int index3)
+        {
+            if (Rank != 3)
+                throw new ArgumentException(SR.Arg_Need3DArray);
+            Contract.EndContractBlock();
+
+            int* pIndices = stackalloc int[3];
+            pIndices[0] = index1;
+            pIndices[1] = index2;
+            pIndices[2] = index3;
+            return GetValue(pIndices, 3);
+        }
+
         public unsafe Object GetValue(params int[] indices)
         {
             if (indices == null)
@@ -2403,6 +2495,31 @@ namespace System
                     throw new InvalidCastException(SR.InvalidCast_StoreArrayElement);
                 }
             }
+        }
+
+        public unsafe void SetValue(Object value, int index1, int index2)
+        {
+            if (Rank != 2)
+                throw new ArgumentException(SR.Arg_Need2DArray);
+            Contract.EndContractBlock();
+
+            int* pIndices = stackalloc int[2];
+            pIndices[0] = index1;
+            pIndices[1] = index2;
+            SetValue(value, pIndices, 2);
+        }
+
+        public unsafe void SetValue(Object value, int index1, int index2, int index3)
+        {
+            if (Rank != 3)
+                throw new ArgumentException(SR.Arg_Need3DArray);
+            Contract.EndContractBlock();
+
+            int* pIndices = stackalloc int[3];
+            pIndices[0] = index1;
+            pIndices[1] = index2;
+            pIndices[2] = index3;
+            SetValue(value, pIndices, 3);
         }
 
         public unsafe void SetValue(Object value, params int[] indices)

@@ -10,9 +10,10 @@ namespace ILCompiler.DependencyAnalysis
     {
         public void AppendMangledName(NameMangler nameMangler, Utf8StringBuilder sb)
         {
-            sb.Append(NodeFactory.CompilationUnitPrefix).Append("__typemanager_indirection");
+            sb.Append(nameMangler.CompilationUnitPrefix).Append("__typemanager_indirection");
         }
         public int Offset => 0;
+        public override bool IsShareable => false;
 
         protected override string GetName() => this.GetMangledName();
 
@@ -25,6 +26,7 @@ namespace ILCompiler.DependencyAnalysis
             ObjectDataBuilder objData = new ObjectDataBuilder(factory);
             objData.DefinedSymbols.Add(this);
             objData.RequirePointerAlignment();
+            objData.EmitZeroPointer();
             objData.EmitZeroPointer();
             return objData.ToObjectData();
         }

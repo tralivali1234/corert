@@ -25,6 +25,12 @@
     <StartupObject />
   </PropertyGroup>
   <ItemGroup>
+    <PackageDestination Include="Tools">
+      <InProject>false</InProject>
+      <TargetFramework>.NetCoreApp,Version=1.2</TargetFramework>
+    </PackageDestination>
+  </ItemGroup>
+  <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="RdXmlRootProvider.cs" />
   </ItemGroup>
