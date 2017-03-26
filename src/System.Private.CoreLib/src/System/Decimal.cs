@@ -307,7 +307,7 @@ namespace System
         // null is considered to be less than any instance.
         // If object is not of type Decimal, this method throws an ArgumentException.
         // 
-        int IComparable.CompareTo(Object value)
+        public int CompareTo(Object value)
         {
             if (value == null)
                 return 1;
@@ -824,18 +824,18 @@ namespace System
             return new Decimal(value);
         }
 
-        public static explicit operator byte (Decimal value)
+        public static explicit operator byte(Decimal value)
         {
             return ToByte(value);
         }
 
         [CLSCompliant(false)]
-        public static explicit operator sbyte (Decimal value)
+        public static explicit operator sbyte(Decimal value)
         {
             return ToSByte(value);
         }
 
-        public static explicit operator char (Decimal value)
+        public static explicit operator char(Decimal value)
         {
             UInt16 temp;
             try
@@ -849,45 +849,45 @@ namespace System
             return (char)temp;
         }
 
-        public static explicit operator short (Decimal value)
+        public static explicit operator short(Decimal value)
         {
             return ToInt16(value);
         }
 
         [CLSCompliant(false)]
-        public static explicit operator ushort (Decimal value)
+        public static explicit operator ushort(Decimal value)
         {
             return ToUInt16(value);
         }
 
-        public static explicit operator int (Decimal value)
+        public static explicit operator int(Decimal value)
         {
             return ToInt32(value);
         }
 
         [CLSCompliant(false)]
-        public static explicit operator uint (Decimal value)
+        public static explicit operator uint(Decimal value)
         {
             return ToUInt32(value);
         }
 
-        public static explicit operator long (Decimal value)
+        public static explicit operator long(Decimal value)
         {
             return ToInt64(value);
         }
 
         [CLSCompliant(false)]
-        public static explicit operator ulong (Decimal value)
+        public static explicit operator ulong(Decimal value)
         {
             return ToUInt64(value);
         }
 
-        public static explicit operator float (Decimal value)
+        public static explicit operator float(Decimal value)
         {
             return ToSingle(value);
         }
 
-        public static explicit operator double (Decimal value)
+        public static explicit operator double(Decimal value)
         {
             return ToDouble(value);
         }
@@ -971,97 +971,82 @@ namespace System
         // IConvertible implementation
         //
 
-        TypeCode IConvertible.GetTypeCode()
+        public TypeCode GetTypeCode()
         {
             return TypeCode.Decimal;
         }
 
-        /// <internalonly/>
         bool IConvertible.ToBoolean(IFormatProvider provider)
         {
             return Convert.ToBoolean(this);
         }
 
 
-        /// <internalonly/>
         char IConvertible.ToChar(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Decimal", "Char"));
         }
 
-        /// <internalonly/>
         sbyte IConvertible.ToSByte(IFormatProvider provider)
         {
             return Convert.ToSByte(this);
         }
 
-        /// <internalonly/>
         byte IConvertible.ToByte(IFormatProvider provider)
         {
             return Convert.ToByte(this);
         }
 
-        /// <internalonly/>
         short IConvertible.ToInt16(IFormatProvider provider)
         {
             return Convert.ToInt16(this);
         }
 
-        /// <internalonly/>
         ushort IConvertible.ToUInt16(IFormatProvider provider)
         {
             return Convert.ToUInt16(this);
         }
 
-        /// <internalonly/>
         int IConvertible.ToInt32(IFormatProvider provider)
         {
             return Convert.ToInt32(this);
         }
 
-        /// <internalonly/>
         uint IConvertible.ToUInt32(IFormatProvider provider)
         {
             return Convert.ToUInt32(this);
         }
 
-        /// <internalonly/>
         long IConvertible.ToInt64(IFormatProvider provider)
         {
             return Convert.ToInt64(this);
         }
 
-        /// <internalonly/>
         ulong IConvertible.ToUInt64(IFormatProvider provider)
         {
             return Convert.ToUInt64(this);
         }
 
-        /// <internalonly/>
         float IConvertible.ToSingle(IFormatProvider provider)
         {
             return Convert.ToSingle(this);
         }
 
-        /// <internalonly/>
         double IConvertible.ToDouble(IFormatProvider provider)
         {
             return Convert.ToDouble(this);
         }
 
-        /// <internalonly/>
         Decimal IConvertible.ToDecimal(IFormatProvider provider)
         {
             return this;
         }
 
-        /// <internalonly/>
         DateTime IConvertible.ToDateTime(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Decimal", "DateTime"));
         }
 
-        /// <internalonly/>
         Object IConvertible.ToType(Type type, IFormatProvider provider)
         {
             return Convert.DefaultToType((IConvertible)this, type, provider);

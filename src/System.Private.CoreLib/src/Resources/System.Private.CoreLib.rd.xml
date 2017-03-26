@@ -87,7 +87,17 @@
         <!-- System.TimeSpan is well known to the serializers and must not be explicitly specified to sg.exe -->
         <Type Name="TimeSpan" DataContractJsonSerializer="Excluded" DataContractSerializer="Excluded"/>
       </Namespace>
+      <Namespace Name="System.Reflection">
+        <Type Name="MethodInfo">
+          <Method Name="CreateDelegate">
+            <TypeParameter Name="delegateType" Activate="Public"/>
+          </Method>
+        </Type>
+      </Namespace>
     </Assembly>
+    
+    <!-- ResourceManager lights up WindowsRuntimeResourceManager with reflection -->
+    <Type Name="System.Resources.WindowsRuntimeResourceManager" Activate="Required Public" />
+    <Type Name="Internal.Runtime.CompilerServices.HasEmbeddedStringResourcesAttribute" Browse="Required Public" />
   </Library>
 </Directives>
-

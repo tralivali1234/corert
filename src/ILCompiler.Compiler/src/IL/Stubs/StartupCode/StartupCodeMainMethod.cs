@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 
 using Internal.TypeSystem;
 
@@ -20,11 +21,13 @@ namespace Internal.IL.Stubs.StartupCode
         private TypeDesc _owningType;
         private MainMethodWrapper _mainMethod;
         private MethodSignature _signature;
+        private IList<MethodDesc> _libraryInitializers;
 
-        public StartupCodeMainMethod(TypeDesc owningType, MethodDesc mainMethod)
+        public StartupCodeMainMethod(TypeDesc owningType, MethodDesc mainMethod, IList<MethodDesc> libraryInitializers)
         {
             _owningType = owningType;
             _mainMethod = new MainMethodWrapper(owningType, mainMethod);
+            _libraryInitializers = libraryInitializers;
         }
 
         public override TypeSystemContext Context
@@ -56,14 +59,15 @@ namespace Internal.IL.Stubs.StartupCode
             ILEmitter emitter = new ILEmitter();
             ILCodeStream codeStream = emitter.NewCodeStream();
 
-            ModuleDesc developerExperience = Context.ResolveAssembly(new AssemblyName("System.Private.DeveloperExperience.Console"), false);
-            if (developerExperience != null)
+            // Allow the class library to run explicitly ordered class constructors first thing in start-up.
+            if (_libraryInitializers != null)
             {
-                TypeDesc connectorType = developerExperience.GetKnownType("Internal.DeveloperExperience", "DeveloperExperienceConnectorConsole");
-                MethodDesc initializeMethod = connectorType.GetKnownMethod("Initialize", null);
-                codeStream.Emit(ILOpcode.call, emitter.NewToken(initializeMethod));
+                foreach (MethodDesc method in _libraryInitializers)
+                {
+                    codeStream.Emit(ILOpcode.call, emitter.NewToken(method));
+                }
             }
-
+            
             MetadataType startup = Context.GetHelperType("StartupCodeHelpers");
 
             // Initialize command line args if the class library supports this
@@ -76,6 +80,16 @@ namespace Internal.IL.Stubs.StartupCode
                 codeStream.Emit(ILOpcode.ldarg_0); // argc
                 codeStream.Emit(ILOpcode.ldarg_1); // argv
                 codeStream.Emit(ILOpcode.call, emitter.NewToken(initArgs));
+            }
+
+            // Initialize the entrypoint assembly if the class library supports this
+            MethodDesc initEntryAssembly = startup.GetMethod("InitializeEntryAssembly", null);
+            if (initEntryAssembly != null)
+            {
+                IAssemblyDesc entrypointAssembly = ((MetadataType)_mainMethod.WrappedMethod.OwningType).Module as IAssemblyDesc;
+                Debug.Assert(entrypointAssembly != null, "Multi-module assembly?");
+                codeStream.Emit(ILOpcode.ldstr, emitter.NewToken(entrypointAssembly.GetName().FullName));
+                codeStream.Emit(ILOpcode.call, emitter.NewToken(initEntryAssembly));
             }
 
             // Call program Main
@@ -156,13 +170,15 @@ namespace Internal.IL.Stubs.StartupCode
         /// </summary>
         private class MainMethodWrapper : ILStubMethod
         {
-            private MethodDesc _mainMethod;
-
             public MainMethodWrapper(TypeDesc owningType, MethodDesc mainMethod)
             {
-                _mainMethod = mainMethod;
-
+                WrappedMethod = mainMethod;
                 OwningType = owningType;
+            }
+
+            public MethodDesc WrappedMethod
+            {
+                get;
             }
 
             public override TypeSystemContext Context
@@ -190,7 +206,7 @@ namespace Internal.IL.Stubs.StartupCode
             {
                 get
                 {
-                    return _mainMethod.Signature;
+                    return WrappedMethod.Signature;
                 }
             }
 
@@ -202,7 +218,7 @@ namespace Internal.IL.Stubs.StartupCode
                 for (int i = 0; i < Signature.Length; i++)
                     codeStream.EmitLdArg(i);
 
-                codeStream.Emit(ILOpcode.call, emit.NewToken(_mainMethod));
+                codeStream.Emit(ILOpcode.call, emit.NewToken(WrappedMethod));
 
                 codeStream.Emit(ILOpcode.ret);
 

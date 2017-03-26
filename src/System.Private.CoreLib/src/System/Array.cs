@@ -80,6 +80,8 @@ namespace System
             Contract.Ensures(Contract.Result<Array>().Rank == 1);
             Contract.EndContractBlock();
 
+            elementType = elementType.UnderlyingSystemType;
+
             return CreateSzArray(elementType, length);
         }
 
@@ -96,6 +98,8 @@ namespace System
             Contract.Ensures(Contract.Result<Array>().Rank == 2);
             Contract.Ensures(Contract.Result<Array>().GetLength(0) == length1);
             Contract.Ensures(Contract.Result<Array>().GetLength(1) == length2);
+
+            elementType = elementType.UnderlyingSystemType;
 
             Type arrayType = GetArrayTypeFromElementType(elementType, true, 2);
             int* pLengths = stackalloc int[2];
@@ -121,6 +125,8 @@ namespace System
             Contract.Ensures(Contract.Result<Array>().GetLength(1) == length2);
             Contract.Ensures(Contract.Result<Array>().GetLength(2) == length3);
 
+            elementType = elementType.UnderlyingSystemType;
+
             Type arrayType = GetArrayTypeFromElementType(elementType, true, 3);
             int* pLengths = stackalloc int[3];
             pLengths[0] = length1;
@@ -141,6 +147,8 @@ namespace System
             Contract.Ensures(Contract.Result<Array>() != null);
             Contract.Ensures(Contract.Result<Array>().Rank == lengths.Length);
             Contract.EndContractBlock();
+
+            elementType = elementType.UnderlyingSystemType;
 
             if (lengths.Length == 1)
             {
@@ -169,6 +177,8 @@ namespace System
             Contract.Ensures(Contract.Result<Array>().Rank == lengths.Length);
             Contract.EndContractBlock();
 
+            elementType = elementType.UnderlyingSystemType;
+
             if (lengths.Length == 1 && lowerBounds[0] == 0)
             {
                 int length = lengths[0];
@@ -178,6 +188,26 @@ namespace System
             {
                 return CreateMultiDimArray(elementType, lengths, lowerBounds);
             }
+        }
+
+        public static Array CreateInstance(Type elementType, params long[] lengths)
+        {
+            if (lengths == null)
+                throw new ArgumentNullException(nameof(lengths));
+            if (lengths.Length == 0)
+                throw new ArgumentException(SR.Arg_NeedAtLeast1Rank);
+
+            int[] intLengths = new int[lengths.Length];
+
+            for (int i = 0; i < lengths.Length; ++i)
+            {
+                long len = lengths[i];
+                if (len > int.MaxValue || len < int.MinValue)
+                    throw new ArgumentOutOfRangeException("len", SR.ArgumentOutOfRange_HugeArrayNotSupported);
+                intLengths[i] = (int)len;
+            }
+
+            return Array.CreateInstance(elementType, intLengths);
         }
 
         private static Array CreateSzArray(Type elementType, int length)
@@ -985,18 +1015,6 @@ namespace System
         bool IList.IsReadOnly
         { get { return false; } }
 
-        bool IList.IsFixedSize
-        {
-            get { return true; }
-        }
-
-        // Is this Array synchronized (i.e., thread-safe)?  If you want a synchronized
-        // collection, you can use SyncRoot as an object to synchronize your 
-        // collection with.  You could also call GetSynchronized() 
-        // to get a synchronized wrapper around the Array.
-        bool ICollection.IsSynchronized
-        { get { return false; } }
-
         Object IList.this[int index]
         {
             get
@@ -1059,13 +1077,6 @@ namespace System
                 throw new ArgumentException(SR.Arg_RankMultiDimNotSupported);
 
             Array.Copy(this, 0, array, index, Length);
-        }
-
-        // Returns an object appropriate for synchronizing access to this 
-        // Array.
-        Object ICollection.SyncRoot
-        {
-            get { return this; }
         }
 
         // Make a new array which is a deep copy of the original array.
@@ -1179,6 +1190,162 @@ namespace System
                 throw new ArgumentNullException(nameof(array));
             return BinarySearch(array, 0, array.Length, value, null);
         }
+
+        public static TOutput[] ConvertAll<TInput, TOutput>(TInput[] array, Converter<TInput, TOutput> converter)
+        {
+            if (array == null)
+                throw new ArgumentNullException(nameof(array));
+
+            if (converter == null)
+                throw new ArgumentNullException(nameof(converter));
+
+            Contract.Ensures(Contract.Result<TOutput[]>() != null);
+            Contract.Ensures(Contract.Result<TOutput[]>().Length == array.Length);
+            Contract.EndContractBlock();
+
+            TOutput[] newArray = new TOutput[array.Length];
+            for (int i = 0; i < array.Length; i++)
+            {
+                newArray[i] = converter(array[i]);
+            }
+            return newArray;
+        }
+
+        public static void Copy(Array sourceArray, Array destinationArray, long length)
+        {
+            if (length > Int32.MaxValue || length < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(length), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+
+            Array.Copy(sourceArray, destinationArray, (int)length);
+        }
+
+        public static void Copy(Array sourceArray, long sourceIndex, Array destinationArray, long destinationIndex, long length)
+        {
+            if (sourceIndex > Int32.MaxValue || sourceIndex < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(sourceIndex), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (destinationIndex > Int32.MaxValue || destinationIndex < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(destinationIndex), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (length > Int32.MaxValue || length < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(length), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+
+            Array.Copy(sourceArray, (int)sourceIndex, destinationArray, (int)destinationIndex, (int)length);
+        }
+
+        [Pure]
+        public void CopyTo(Array array, long index)
+        {
+            if (index > Int32.MaxValue || index < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            Contract.EndContractBlock();
+
+            this.CopyTo(array, (int)index);
+        }
+
+        public static void ForEach<T>(T[] array, Action<T> action)
+        {
+            if (array == null)
+                throw new ArgumentNullException(nameof(array));
+
+            if (action == null)
+                throw new ArgumentNullException(nameof(action));
+
+            Contract.EndContractBlock();
+
+            for (int i = 0; i < array.Length; i++)
+            {
+                action(array[i]);
+            }
+        }
+
+        public long LongLength
+        {
+            get
+            {
+                long ret = GetLength(0);
+
+                for (int i = 1; i < Rank; ++i)
+                {
+                    ret = ret * GetLength(i);
+                }
+
+                return ret;
+            }
+        }
+
+        public long GetLongLength(int dimension)
+        {
+            // This method does throw an IndexOutOfRangeException for compat if dimension < 0 or >= Rank
+            // by calling GetUpperBound
+            return GetLength(dimension);
+        }
+
+        public Object GetValue(long index)
+        {
+            if (index > Int32.MaxValue || index < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            Contract.EndContractBlock();
+
+            return this.GetValue((int)index);
+        }
+
+        public Object GetValue(long index1, long index2)
+        {
+            if (index1 > Int32.MaxValue || index1 < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index1), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index2 > Int32.MaxValue || index2 < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index2), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            Contract.EndContractBlock();
+
+            return this.GetValue((int)index1, (int)index2);
+        }
+
+        public Object GetValue(long index1, long index2, long index3)
+        {
+            if (index1 > Int32.MaxValue || index1 < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index1), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index2 > Int32.MaxValue || index2 < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index2), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index3 > Int32.MaxValue || index3 < Int32.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index3), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            Contract.EndContractBlock();
+
+            return this.GetValue((int)index1, (int)index2, (int)index3);
+        }
+
+        public Object GetValue(params long[] indices)
+        {
+            if (indices == null)
+                throw new ArgumentNullException(nameof(indices));
+            if (Rank != indices.Length)
+                throw new ArgumentException(SR.Arg_RankIndices);
+            Contract.EndContractBlock();
+
+            int[] intIndices = new int[indices.Length];
+
+            for (int i = 0; i < indices.Length; ++i)
+            {
+                long index = indices[i];
+                if (index > Int32.MaxValue || index < Int32.MinValue)
+                    throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+                intIndices[i] = (int)index;
+            }
+
+            return this.GetValue(intIndices);
+        }
+
+        public bool IsFixedSize { get { return true; } }
+
+        public bool IsReadOnly { get { return false; } }
+
+        // Is this Array synchronized (i.e., thread-safe)?  If you want a synchronized
+        // collection, you can use SyncRoot as an object to synchronize your 
+        // collection with.  You could also call GetSynchronized() 
+        // to get a synchronized wrapper around the Array.
+        public bool IsSynchronized { get { return false; } }
+
+        // Returns an object appropriate for synchronizing access to this 
+        // Array.
+        public Object SyncRoot { get { return this; } }
 
         // Searches a section of an array for a given element using a binary search
         // algorithm. Elements of the array are compared to the search value using
@@ -2397,18 +2564,22 @@ namespace System
             if (indices == null)
                 throw new ArgumentNullException(nameof(indices));
 
-            if (IsSzArray && indices.Length == 1)
+            int length = indices.Length;
+
+            if (IsSzArray && length == 1)
                 return GetValue(indices[0]);
 
-            fixed (int* pIndices = indices)
-                return GetValue(pIndices, indices.Length);
+            if (Rank != length)
+                throw new ArgumentException(SR.Arg_RankIndices);
+
+            Debug.Assert(length > 0);
+            fixed (int* pIndices = &indices[0])
+                return GetValue(pIndices, length);
         }
 
         private unsafe Object GetValue(int* pIndices, int rank)
         {
-            if (this.Rank != rank)
-                throw new ArgumentException(SR.Arg_RankIndices);
-
+            Debug.Assert(Rank == rank);
             Debug.Assert(!IsSzArray);
 
             fixed (IntPtr* pThisArray = &m_pEEType)
@@ -2473,7 +2644,7 @@ namespace System
                 if (value != null && !(value.EETypePtr == pElementEEType) && pElementEEType.IsEnum)
                     throw new InvalidCastException(SR.Format(SR.Arg_ObjObjEx, value.GetType(), Type.GetTypeFromHandle(new RuntimeTypeHandle(pElementEEType))));
 
-                value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet);
+                value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet, binderBundle: null);
                 Debug.Assert(value == null || RuntimeImports.AreTypesAssignable(value.EETypePtr, pElementEEType));
 
                 nuint elementSize = ElementSize;
@@ -2527,24 +2698,78 @@ namespace System
             if (indices == null)
                 throw new ArgumentNullException(nameof(indices));
 
-            if (IsSzArray && indices.Length == 1)
+            int length = indices.Length;
+
+            if (IsSzArray && length == 1)
             {
                 SetValue(value, indices[0]);
                 return;
             }
 
-            fixed (int* pIndices = indices)
+            if (Rank != length)
+                throw new ArgumentException(SR.Arg_RankIndices);
+
+            Debug.Assert(length > 0);
+            fixed (int* pIndices = &indices[0])
             {
-                SetValue(value, pIndices, indices.Length);
+                SetValue(value, pIndices, length);
                 return;
             }
         }
 
-        private unsafe void SetValue(Object value, int* pIndices, int rank)
+        public void SetValue(object value, long index)
         {
-            if (this.Rank != rank)
+            if (index > int.MaxValue || index < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+
+            SetValue(value, (int)index);
+        }
+
+        public void SetValue(object value, long index1, long index2)
+        {
+            if (index1 > int.MaxValue || index1 < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index1), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index2 > int.MaxValue || index2 < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index2), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+
+            SetValue(value, (int)index1, (int)index2);
+        }
+
+        public void SetValue(object value, long index1, long index2, long index3)
+        {
+            if (index1 > int.MaxValue || index1 < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index1), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index2 > int.MaxValue || index2 < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index2), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+            if (index3 > int.MaxValue || index3 < int.MinValue)
+                throw new ArgumentOutOfRangeException(nameof(index3), SR.ArgumentOutOfRange_HugeArrayNotSupported);
+
+            SetValue(value, (int)index1, (int)index2, (int)index3);
+        }
+
+        public void SetValue(object value, params long[] indices)
+        {
+            if (indices == null)
+                throw new ArgumentNullException(nameof(indices));
+            if (Rank != indices.Length)
                 throw new ArgumentException(SR.Arg_RankIndices);
 
+            int[] intIndices = new int[indices.Length];
+
+            for (int i = 0; i < indices.Length; ++i)
+            {
+                long index = indices[i];
+                if (index > int.MaxValue || index < int.MinValue)
+                    throw new ArgumentOutOfRangeException("index", SR.ArgumentOutOfRange_HugeArrayNotSupported);
+                intIndices[i] = (int)index;
+            }
+
+            SetValue(value, intIndices);
+        }
+
+        private unsafe void SetValue(Object value, int* pIndices, int rank)
+        {
+            Debug.Assert(Rank == rank);
             Debug.Assert(!IsSzArray);
 
             fixed (IntPtr* pThisArray = &m_pEEType)
@@ -2575,7 +2800,7 @@ namespace System
                     if (value != null && !(value.EETypePtr == pElementEEType) && pElementEEType.IsEnum)
                         throw new InvalidCastException(SR.Format(SR.Arg_ObjObjEx, value.GetType(), Type.GetTypeFromHandle(new RuntimeTypeHandle(pElementEEType))));
 
-                    value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet);
+                    value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet, binderBundle: null);
                     Debug.Assert(value == null || RuntimeImports.AreTypesAssignable(value.EETypePtr, pElementEEType));
 
                     RuntimeImports.RhUnbox(value, pElement, pElementEEType);
@@ -2730,7 +2955,13 @@ namespace System
             }
         }
 
-        public bool IsReadOnly
+        //
+        // Fun fact:
+        //
+        //  ((int[])a).IsReadOnly returns false.
+        //  ((IList<int>)a).IsReadOnly returns true.
+        //
+        public new bool IsReadOnly
         {
             get
             {

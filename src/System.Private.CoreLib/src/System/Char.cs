@@ -132,7 +132,7 @@ namespace System
         // If object is not of type Char, this method throws an ArgumentException.
         //
         [Pure]
-        int IComparable.CompareTo(Object value)
+        public int CompareTo(Object value)
         {
             if (value == null)
             {
@@ -161,7 +161,7 @@ namespace System
         }
 
         [Pure]
-        String IConvertible.ToString(IFormatProvider provider)
+        public String ToString(IFormatProvider provider)
         {
             Contract.Ensures(Contract.Result<String>() != null);
             return Char.ToString(m_value);
@@ -457,97 +457,82 @@ namespace System
         // IConvertible implementation
         //    
         [Pure]
-        TypeCode IConvertible.GetTypeCode()
+        public TypeCode GetTypeCode()
         {
             return TypeCode.Char;
         }
 
 
-        /// <internalonly/>
         bool IConvertible.ToBoolean(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Char", "Boolean"));
         }
 
-        /// <internalonly/>
         char IConvertible.ToChar(IFormatProvider provider)
         {
             return m_value;
         }
 
-        /// <internalonly/>
         sbyte IConvertible.ToSByte(IFormatProvider provider)
         {
             return Convert.ToSByte(m_value);
         }
 
-        /// <internalonly/>
         byte IConvertible.ToByte(IFormatProvider provider)
         {
             return Convert.ToByte(m_value);
         }
 
-        /// <internalonly/>
         short IConvertible.ToInt16(IFormatProvider provider)
         {
             return Convert.ToInt16(m_value);
         }
 
-        /// <internalonly/>
         ushort IConvertible.ToUInt16(IFormatProvider provider)
         {
             return Convert.ToUInt16(m_value);
         }
 
-        /// <internalonly/>
         int IConvertible.ToInt32(IFormatProvider provider)
         {
             return Convert.ToInt32(m_value);
         }
 
-        /// <internalonly/>
         uint IConvertible.ToUInt32(IFormatProvider provider)
         {
             return Convert.ToUInt32(m_value);
         }
 
-        /// <internalonly/>
         long IConvertible.ToInt64(IFormatProvider provider)
         {
             return Convert.ToInt64(m_value);
         }
 
-        /// <internalonly/>
         ulong IConvertible.ToUInt64(IFormatProvider provider)
         {
             return Convert.ToUInt64(m_value);
         }
 
-        /// <internalonly/>
         float IConvertible.ToSingle(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Char", "Single"));
         }
 
-        /// <internalonly/>
         double IConvertible.ToDouble(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Char", "Double"));
         }
 
-        /// <internalonly/>
         Decimal IConvertible.ToDecimal(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Char", "Decimal"));
         }
 
-        /// <internalonly/>
         DateTime IConvertible.ToDateTime(IFormatProvider provider)
         {
             throw new InvalidCastException(String.Format(SR.InvalidCast_FromTo, "Char", "DateTime"));
         }
 
-        /// <internalonly/>
         Object IConvertible.ToType(Type type, IFormatProvider provider)
         {
             return Convert.DefaultToType((IConvertible)this, type, provider);

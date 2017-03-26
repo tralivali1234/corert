@@ -6,14 +6,14 @@ usage()
     echo "managed - optional argument to build the managed code"
     echo "native - optional argument to build the native code"
     echo "The following arguments affect native builds only:"
-    echo "BuildArch can be: x64, x86, arm, arm64"
+    echo "BuildArch can be: x64, x86, arm, arm64, armel"
     echo "BuildType can be: Debug, Release"
     echo "clean - optional argument to force a clean build."
     echo "verbose - optional argument to enable verbose build output."
     echo "clangx.y - optional argument to build using clang version x.y."
     echo "cross - optional argument to signify cross compilation,"
     echo "      - will use ROOTFS_DIR environment variable if set."
-
+    echo "skiptests - optional argument to skip running tests after building."
     exit 1
 }
 
@@ -149,7 +149,7 @@ export __UnprocessedBuildArgs=
 export __CleanBuild=0
 export __VerboseBuild=0
 export __ClangMajorVersion=3
-export __ClangMinorVersion=5
+export __ClangMinorVersion=9
 export __CrossBuild=0
 
 
@@ -178,6 +178,11 @@ while [ "$1" != "" ]; do
         arm64)
             export __BuildArch=arm64
             ;;
+        armel)
+            export __BuildArch=armel
+            export __ClangMajorVersion=3
+            export __ClangMinorVersion=5
+            ;;
         debug)
             export __BuildType=Debug
             ;;
@@ -190,10 +195,6 @@ while [ "$1" != "" ]; do
         verbose)
             export __VerboseBuild=1
             ;;
-        clang3.5)
-            export __ClangMajorVersion=3
-            export __ClangMinorVersion=5
-            ;;
         clang3.6)
             export __ClangMajorVersion=3
             export __ClangMinorVersion=6
@@ -201,6 +202,14 @@ while [ "$1" != "" ]; do
         clang3.7)
             export __ClangMajorVersion=3
             export __ClangMinorVersion=7
+            ;;
+        clang3.8)
+            export __ClangMajorVersion=3
+            export __ClangMinorVersion=8
+            ;;
+        clang3.9)
+            export __ClangMajorVersion=3
+            export __ClangMinorVersion=9
             ;;
         cross)
             export __CrossBuild=1
@@ -212,6 +221,9 @@ while [ "$1" != "" ]; do
         -officialbuildid)
             shift
             export __ExtraMsBuildArgs="$__ExtraMsBuildArgs /p:OfficialBuildId=$1"
+            ;;
+        skiptests)
+            export __SkipTests=true
             ;;
         *)
           export __UnprocessedBuildArgs="$__UnprocessedBuildArgs $1"
