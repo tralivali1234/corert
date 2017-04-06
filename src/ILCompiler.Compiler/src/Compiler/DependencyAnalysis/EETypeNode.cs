@@ -5,8 +5,6 @@
 using System;
 using System.Collections.Generic;
 
-using ILCompiler.DependencyAnalysisFramework;
-
 using Internal.IL;
 using Internal.Runtime;
 using Internal.Text;
@@ -278,8 +276,6 @@ namespace ILCompiler.DependencyAnalysis
                 flags |= (UInt16)EETypeFlags.RelatedTypeViaIATFlag;
             }
 
-            // Todo: Generic Type Definition EETypes
-
             if (HasOptionalFields)
             {
                 flags |= (UInt16)EETypeFlags.OptionalFieldsFlag;
@@ -408,7 +404,8 @@ namespace ILCompiler.DependencyAnalysis
             if (declType.HasGenericDictionarySlot())
             {
                 // Note: Canonical type instantiations always have a generic dictionary vtable slot, but it's empty
-                if (declType.IsCanonicalSubtype(CanonicalFormKind.Any))
+                // TODO: emit the correction dictionary slot for interfaces (needed when we start supporting static methods on interfaces)
+                if (declType.IsInterface || declType.IsCanonicalSubtype(CanonicalFormKind.Any))
                     objData.EmitZeroPointer();
                 else
                     objData.EmitPointerReloc(factory.TypeGenericDictionary(declType));
@@ -449,7 +446,7 @@ namespace ILCompiler.DependencyAnalysis
 
             foreach (var itf in _type.RuntimeInterfaces)
             {
-                objData.EmitPointerReloc(factory.NecessaryTypeSymbol(itf));
+                objData.EmitPointerRelocOrIndirectionReference(factory.NecessaryTypeSymbol(itf));
             }
         }
 
@@ -484,7 +481,7 @@ namespace ILCompiler.DependencyAnalysis
         {
             if (_type.HasInstantiation && !_type.IsTypeDefinition)
             {
-                objData.EmitPointerReloc(factory.NecessaryTypeSymbol(_type.GetTypeDefinition()));
+                objData.EmitPointerRelocOrIndirectionReference(factory.NecessaryTypeSymbol(_type.GetTypeDefinition()));
 
                 GenericCompositionDetails details;
                 if (_type.GetTypeDefinition() == factory.ArrayOfTEnumeratorType)
@@ -527,6 +524,12 @@ namespace ILCompiler.DependencyAnalysis
             if (_type.IsNullable)
             {
                 flags |= (uint)EETypeRareFlags.IsNullableFlag;
+
+                // If the nullable type is not part of this compilation group, and
+                // the output binaries will be multi-file (not multiple object files linked together), indicate to the runtime
+                // that it should indirect through the import address table
+                if (factory.NecessaryTypeSymbol(_type.Instantiation[0]).RepresentsIndirectionCell)
+                    flags |= (uint)EETypeRareFlags.NullableTypeViaIATFlag;
             }
 
             if (factory.TypeSystemContext.HasLazyStaticConstructor(_type))
@@ -733,9 +736,9 @@ namespace ILCompiler.DependencyAnalysis
 
                 if (parameterizedType.IsArray)
                 {
-                    if (parameterType.IsPointer || parameterType.IsFunctionPointer)
+                    if (parameterType.IsFunctionPointer)
                     {
-                        // Arrays of pointers and function pointers are not currently supported
+                        // Arrays of function pointers are not currently supported
                         throw new TypeSystemException.TypeLoadException(ExceptionStringID.ClassLoadGeneral, type);
                     }
 

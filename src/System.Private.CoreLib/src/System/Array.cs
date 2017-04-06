@@ -40,13 +40,11 @@ namespace System
 
 #if BIT64
         private const int POINTER_SIZE = 8;
-        private const int PADDING = 1; // _numComponents is padded by one Int32 to make the first element pointer-aligned
 #else
         private const int POINTER_SIZE = 4;
-        private const int PADDING = 0;
 #endif
-        //                                     Header       + m_pEEType    + _numComponents (with an optional padding)
-        internal const int SZARRAY_BASE_SIZE = POINTER_SIZE + POINTER_SIZE + (1 + PADDING) * 4;
+        //                                    Header       + m_pEEType    + _numComponents (with an optional padding)
+        private const int SZARRAY_BASE_SIZE = POINTER_SIZE + POINTER_SIZE + POINTER_SIZE;
 
         public int Length
         {
@@ -64,11 +62,6 @@ namespace System
             {
                 return this.EETypePtr.BaseSize == SZARRAY_BASE_SIZE;
             }
-        }
-
-        internal void SetLength(int length)
-        {
-            _numComponents = length;
         }
 
         public static Array CreateInstance(Type elementType, int length)
@@ -259,15 +252,6 @@ namespace System
             return;
         }
 
-        // If you use C#'s 'fixed' statement to get the address of m_pEEType, you want to pass it into this
-        // function to get the address of the first field.  NOTE: If you use GetAddrOfPinnedObject instead,
-        // C# may optimize away the pinned local, producing incorrect results.
-        internal static unsafe byte* GetAddrOfPinnedArrayFromEETypeField(IntPtr* ppEEType)
-        {
-            // -POINTER_SIZE to account for the sync block
-            return (byte*)ppEEType + new EETypePtr(*ppEEType).BaseSize - POINTER_SIZE;
-        }
-
         [StructLayout(LayoutKind.Sequential)]
         private class RawData
         {
@@ -277,13 +261,19 @@ namespace System
 
         internal ref byte GetRawSzArrayData()
         {
-            Debug.Assert(this.IsSzArray);
+            Debug.Assert(IsSzArray);
             return ref Unsafe.As<RawData>(this).Data;
         }
 
         internal ref byte GetRawArrayData()
         {
             return ref Unsafe.Add(ref Unsafe.As<RawData>(this).Data, (int)(EETypePtr.BaseSize - SZARRAY_BASE_SIZE));
+        }
+
+        private ref int GetRawMultiDimArrayBounds()
+        {
+            Debug.Assert(!IsSzArray);
+            return ref Unsafe.AddByteOffset(ref _numComponents, POINTER_SIZE);
         }
 
         public static ReadOnlyCollection<T> AsReadOnly<T>(T[] array)
@@ -369,9 +359,9 @@ namespace System
             EETypePtr sourceElementEEType = sourceArray.ElementEEType;
             EETypePtr destinationElementEEType = destinationArray.ElementEEType;
 
-            if (!(destinationElementEEType.IsValueType))
+            if (!destinationElementEEType.IsValueType && !destinationElementEEType.IsPointer)
             {
-                if (!(sourceElementEEType.IsValueType))
+                if (!sourceElementEEType.IsValueType && !sourceElementEEType.IsPointer)
                 {
                     CopyImplGcRefArray((Object[])sourceArray, sourceIndex, (Object[])destinationArray, destinationIndex, length, reliable);
                 }
@@ -397,6 +387,14 @@ namespace System
                         CopyImplValueTypeArrayNoInnerGcRefs(sourceArray, sourceIndex, destinationArray, destinationIndex, length);
                     }
                 }
+                else if (sourceElementEEType.IsPointer && destinationElementEEType.IsPointer)
+                {
+                    // CLR compat note: CLR only allows Array.Copy between pointee types that would be assignable
+                    // to using array covariance rules (so int*[] can be copied to uint*[], but not to float*[]).
+                    // This is rather weird since e.g. we don't allow casting int*[] to uint*[] otherwise.
+                    // Instead of trying to replicate the behavior, we're choosing to be simply more permissive here.
+                    CopyImplValueTypeArrayNoInnerGcRefs(sourceArray, sourceIndex, destinationArray, destinationIndex, length);
+                }
                 else if (IsSourceElementABaseClassOrInterfaceOfDestinationValueType(sourceElementEEType, destinationElementEEType))
                 {
                     CopyImplReferenceArrayToValueTypeArray((Object[])sourceArray, sourceIndex, destinationArray, destinationIndex, length, reliable);
@@ -412,7 +410,7 @@ namespace System
 
         private static bool IsSourceElementABaseClassOrInterfaceOfDestinationValueType(EETypePtr sourceElementEEType, EETypePtr destinationElementEEType)
         {
-            if (sourceElementEEType.IsValueType)
+            if (sourceElementEEType.IsValueType || sourceElementEEType.IsPointer)
                 return false;
 
             // It may look like we're passing the arguments to AreTypesAssignable in the wrong order but we're not. The source array is an interface or Object array, the destination
@@ -600,8 +598,10 @@ namespace System
         //
         internal static unsafe void CopyImplValueTypeArrayNoInnerGcRefs(Array sourceArray, int sourceIndex, Array destinationArray, int destinationIndex, int length)
         {
-            Debug.Assert(sourceArray.ElementEEType.IsValueType && !sourceArray.ElementEEType.HasPointers);
-            Debug.Assert(destinationArray.ElementEEType.IsValueType && !destinationArray.ElementEEType.HasPointers);
+            Debug.Assert((sourceArray.ElementEEType.IsValueType && !sourceArray.ElementEEType.HasPointers) ||
+                sourceArray.ElementEEType.IsPointer);
+            Debug.Assert((destinationArray.ElementEEType.IsValueType && !destinationArray.ElementEEType.HasPointers) ||
+                destinationArray.ElementEEType.IsPointer);
 
             // Copy scenario: ValueType-array to value-type array with no embedded gc-refs.
             nuint elementSize = sourceArray.ElementSize;
@@ -995,13 +995,10 @@ namespace System
 
             Array ret = RuntimeImports.RhNewArray(eeType, (int)totalLength);
 
-            fixed (int* pNumComponents = &ret._numComponents)
+            ref int bounds = ref ret.GetRawMultiDimArrayBounds();
+            for (int i = 0; i < rank; i++)
             {
-                for (int i = 0; i < rank; i++)
-                {
-                    // Lengths follow after _numComponents.
-                    *(pNumComponents + 1 + PADDING + i) = pLengths[i];
-                }
+                Unsafe.Add(ref bounds, i) = pLengths[i];
             }
 
             return ret;
@@ -1238,7 +1235,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
             Contract.EndContractBlock();
 
-            this.CopyTo(array, (int)index);
+            CopyTo(array, (int)index);
         }
 
         public static void ForEach<T>(T[] array, Action<T> action)
@@ -1285,7 +1282,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_HugeArrayNotSupported);
             Contract.EndContractBlock();
 
-            return this.GetValue((int)index);
+            return GetValue((int)index);
         }
 
         public Object GetValue(long index1, long index2)
@@ -1296,7 +1293,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(index2), SR.ArgumentOutOfRange_HugeArrayNotSupported);
             Contract.EndContractBlock();
 
-            return this.GetValue((int)index1, (int)index2);
+            return GetValue((int)index1, (int)index2);
         }
 
         public Object GetValue(long index1, long index2, long index3)
@@ -1309,7 +1306,7 @@ namespace System
                 throw new ArgumentOutOfRangeException(nameof(index3), SR.ArgumentOutOfRange_HugeArrayNotSupported);
             Contract.EndContractBlock();
 
-            return this.GetValue((int)index1, (int)index2, (int)index3);
+            return GetValue((int)index1, (int)index2, (int)index3);
         }
 
         public Object GetValue(params long[] indices)
@@ -1330,7 +1327,7 @@ namespace System
                 intIndices[i] = (int)index;
             }
 
-            return this.GetValue(intIndices);
+            return GetValue(intIndices);
         }
 
         public bool IsFixedSize { get { return true; } }
@@ -2298,16 +2295,23 @@ namespace System
                 throw new ArgumentNullException(nameof(match));
             }
 
-            LowLevelList<T> list = new LowLevelList<T>();
+            int pos = 0;
+            T[] result = Empty<T>();
             for (int i = 0; i < array.Length; i++)
             {
                 if (match(array[i]))
                 {
-                    list.Add(array[i]);
+                    if (pos == result.Length)
+                        Resize(ref result, Math.Min(pos == 0 ? 4 : pos * 2, array.Length));
+
+                    result[pos++] = array[i];
                 }
             }
 
-            return list.ToArray();
+            if (pos != result.Length)
+                Resize(ref result, pos);
+
+            return result;
         }
 
         public static int FindIndex<T>(T[] array, Predicate<T> match)
@@ -2456,14 +2460,7 @@ namespace System
                 if ((uint)dimension >= rank)
                     throw new IndexOutOfRangeException();
 
-                unsafe
-                {
-                    fixed (int* pNumComponents = &_numComponents)
-                    {
-                        // Lower bounds follow after upper bounds.
-                        return *(pNumComponents + 1 + PADDING + rank + dimension);
-                    }
-                }
+                return Unsafe.Add(ref GetRawMultiDimArrayBounds(), rank + dimension);
             }
 
             if (dimension != 0)
@@ -2479,16 +2476,11 @@ namespace System
                 if ((uint)dimension >= rank)
                     throw new IndexOutOfRangeException();
 
-                unsafe
-                {
-                    fixed (int* pNumComponents = &_numComponents)
-                    {
-                        // Lenghts follow after _numComponents.
-                        int length = *(pNumComponents + 1 + PADDING + dimension);
-                        int lowerBound = *(pNumComponents + 1 + PADDING + rank + dimension);
-                        return length + lowerBound - 1;
-                    }
-                }
+                ref int bounds = ref GetRawMultiDimArrayBounds();
+
+                int length = Unsafe.Add(ref bounds, dimension);
+                int lowerBound = Unsafe.Add(ref bounds, rank + dimension);
+                return length + lowerBound - 1;
             }
 
             if (dimension != 0)
@@ -2530,6 +2522,9 @@ namespace System
 
             if ((uint)index >= (uint)Length)
                 throw new IndexOutOfRangeException();
+
+            if (ElementEEType.IsPointer)
+                throw new NotSupportedException(SR.NotSupported_Type);
 
             return GetValueWithFlattenedIndex_NoErrorCheck(index);
         }
@@ -2582,44 +2577,40 @@ namespace System
             Debug.Assert(Rank == rank);
             Debug.Assert(!IsSzArray);
 
-            fixed (IntPtr* pThisArray = &m_pEEType)
+            ref int bounds = ref GetRawMultiDimArrayBounds();
+
+            int flattenedIndex = 0;
+            for (int i = 0; i < rank; i++)
             {
-                // Lengths follow after _numComponents.
-                int* pLengths = (int*)(pThisArray + 1) + 1 + PADDING;
-                int* pLowerBounds = (int*)(pThisArray + 1) + 1 + PADDING + rank;
-
-                int flattenedIndex = 0;
-                for (int i = 0; i < rank; i++)
-                {
-                    int index = pIndices[i] - pLowerBounds[i];
-                    int length = pLengths[i];
-                    if ((uint)index >= (uint)length)
-                        throw new IndexOutOfRangeException();
-                    flattenedIndex = (length * flattenedIndex) + index;
-                }
-
-                if ((uint)flattenedIndex >= (uint)Length)
+                int index = pIndices[i] - Unsafe.Add(ref bounds, rank + i);
+                int length = Unsafe.Add(ref bounds, i);
+                if ((uint)index >= (uint)length)
                     throw new IndexOutOfRangeException();
-
-                return GetValueWithFlattenedIndex_NoErrorCheck(flattenedIndex);
+                flattenedIndex = (length * flattenedIndex) + index;
             }
+
+            if ((uint)flattenedIndex >= (uint)Length)
+                throw new IndexOutOfRangeException();
+
+            if (ElementEEType.IsPointer)
+                throw new NotSupportedException(SR.NotSupported_Type);
+
+            return GetValueWithFlattenedIndex_NoErrorCheck(flattenedIndex);
         }
 
-        private unsafe Object GetValueWithFlattenedIndex_NoErrorCheck(int flattenedIndex)
+        private Object GetValueWithFlattenedIndex_NoErrorCheck(int flattenedIndex)
         {
-            fixed (IntPtr* pThisArray = &m_pEEType)
-            {
-                byte* pElement = Array.GetAddrOfPinnedArrayFromEETypeField(pThisArray) + (nuint)flattenedIndex * ElementSize;
+            ref byte element = ref Unsafe.AddByteOffset(ref GetRawArrayData(), (nuint)flattenedIndex * ElementSize);
 
-                EETypePtr pElementEEType = ElementEEType;
-                if (pElementEEType.IsValueType)
-                {
-                    return RuntimeImports.RhBox(pElementEEType, pElement);
-                }
-                else
-                {
-                    return RuntimeAugments.LoadReferenceTypeField((IntPtr)pElement);
-                }
+            EETypePtr pElementEEType = ElementEEType;
+            if (pElementEEType.IsValueType)
+            {
+                return RuntimeImports.RhBox(pElementEEType, ref element);
+            }
+            else
+            {
+                Debug.Assert(!pElementEEType.IsPointer);
+                return Unsafe.As<byte, object>(ref element);
             }
         }
 
@@ -2647,12 +2638,12 @@ namespace System
                 value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet, binderBundle: null);
                 Debug.Assert(value == null || RuntimeImports.AreTypesAssignable(value.EETypePtr, pElementEEType));
 
-                nuint elementSize = ElementSize;
-                fixed (IntPtr* pThisArray = &m_pEEType)
-                {
-                    byte* pElement = Array.GetAddrOfPinnedArrayFromEETypeField(pThisArray) + (nuint)index * elementSize;
-                    RuntimeImports.RhUnbox(value, pElement, pElementEEType);
-                }
+                ref byte element = ref Unsafe.AddByteOffset(ref GetRawArrayData(), (nuint)index * ElementSize);
+                RuntimeImports.RhUnbox(value, ref element, pElementEEType);
+            }
+            else if (pElementEEType.IsPointer)
+            {
+                throw new NotSupportedException(SR.NotSupported_Type);
             }
             else
             {
@@ -2772,51 +2763,50 @@ namespace System
             Debug.Assert(Rank == rank);
             Debug.Assert(!IsSzArray);
 
-            fixed (IntPtr* pThisArray = &m_pEEType)
+            ref int bounds = ref GetRawMultiDimArrayBounds();
+
+            int flattenedIndex = 0;
+            for (int i = 0; i < rank; i++)
             {
-                // Lengths follow after _numComponents.
-                int* pLengths = (int*)(pThisArray + 1) + 1 + PADDING;
-                int* pLowerBounds = (int*)(pThisArray + 1) + 1 + PADDING + rank;
-
-                int flattenedIndex = 0;
-                for (int i = 0; i < rank; i++)
-                {
-                    int index = pIndices[i] - pLowerBounds[i];
-                    int length = pLengths[i];
-                    if ((uint)index >= (uint)length)
-                        throw new IndexOutOfRangeException();
-                    flattenedIndex = (length * flattenedIndex) + index;
-                }
-
-                if ((uint)flattenedIndex >= (uint)Length)
+                int index = pIndices[i] - Unsafe.Add(ref bounds, rank + i);
+                int length = Unsafe.Add(ref bounds, i);
+                if ((uint)index >= (uint)length)
                     throw new IndexOutOfRangeException();
+                flattenedIndex = (length * flattenedIndex) + index;
+            }
 
-                byte* pElement = Array.GetAddrOfPinnedArrayFromEETypeField(pThisArray) + (nuint)flattenedIndex * ElementSize;
+            if ((uint)flattenedIndex >= (uint)Length)
+                throw new IndexOutOfRangeException();
 
-                EETypePtr pElementEEType = ElementEEType;
-                if (pElementEEType.IsValueType)
+            ref byte element = ref Unsafe.AddByteOffset(ref GetRawArrayData(), (nuint)flattenedIndex * ElementSize);
+
+            EETypePtr pElementEEType = ElementEEType;
+            if (pElementEEType.IsValueType)
+            {
+                // Unlike most callers of InvokeUtils.ChangeType(), Array.SetValue() does *not* permit conversion from a primitive to an Enum.
+                if (value != null && !(value.EETypePtr == pElementEEType) && pElementEEType.IsEnum)
+                    throw new InvalidCastException(SR.Format(SR.Arg_ObjObjEx, value.GetType(), Type.GetTypeFromHandle(new RuntimeTypeHandle(pElementEEType))));
+
+                value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet, binderBundle: null);
+                Debug.Assert(value == null || RuntimeImports.AreTypesAssignable(value.EETypePtr, pElementEEType));
+
+                RuntimeImports.RhUnbox(value, ref element, pElementEEType);
+            }
+            else if (pElementEEType.IsPointer)
+            {
+                throw new NotSupportedException(SR.NotSupported_Type);
+            }
+            else
+            {
+                try
                 {
-                    // Unlike most callers of InvokeUtils.ChangeType(), Array.SetValue() does *not* permit conversion from a primitive to an Enum.
-                    if (value != null && !(value.EETypePtr == pElementEEType) && pElementEEType.IsEnum)
-                        throw new InvalidCastException(SR.Format(SR.Arg_ObjObjEx, value.GetType(), Type.GetTypeFromHandle(new RuntimeTypeHandle(pElementEEType))));
-
-                    value = InvokeUtils.CheckArgument(value, pElementEEType, InvokeUtils.CheckArgumentSemantics.ArraySet, binderBundle: null);
-                    Debug.Assert(value == null || RuntimeImports.AreTypesAssignable(value.EETypePtr, pElementEEType));
-
-                    RuntimeImports.RhUnbox(value, pElement, pElementEEType);
+                    RuntimeImports.RhCheckArrayStore(this, value);
                 }
-                else
+                catch (ArrayTypeMismatchException)
                 {
-                    try
-                    {
-                        RuntimeImports.RhCheckArrayStore(this, value);
-                        RuntimeAugments.StoreReferenceTypeField((IntPtr)pElement, value);
-                    }
-                    catch (ArrayTypeMismatchException)
-                    {
-                        throw new InvalidCastException(SR.InvalidCast_StoreArrayElement);
-                    }
+                    throw new InvalidCastException(SR.InvalidCast_StoreArrayElement);
                 }
+                Unsafe.As<byte, Object>(ref element) = value;
             }
         }
 
@@ -2829,10 +2819,7 @@ namespace System
         {
             get
             {
-                unsafe
-                {
-                    return this.EETypePtr.ArrayElementType;
-                }
+                return this.EETypePtr.ArrayElementType;
             }
         }
 
@@ -2856,6 +2843,9 @@ namespace System
                     return true;
 
                 if (ElementEEType.IsValueType && !ElementEEType.HasPointers)
+                    return true;
+
+                if (ElementEEType.IsPointer)
                     return true;
 
                 return false;
@@ -2891,6 +2881,7 @@ namespace System
                 {
                     if (_index < 0) throw new InvalidOperationException(SR.InvalidOperation_EnumNotStarted);
                     if (_index >= _endIndex) throw new InvalidOperationException(SR.InvalidOperation_EnumEnded);
+                    if (_array.ElementEEType.IsPointer) throw new NotSupportedException(SR.NotSupported_Type);
                     return _array.GetValueWithFlattenedIndex_NoErrorCheck(_index);
                 }
             }
