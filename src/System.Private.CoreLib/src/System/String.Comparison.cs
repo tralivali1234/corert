@@ -4,6 +4,7 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace System
 {
@@ -466,6 +467,12 @@ namespace System
                 case StringComparison.OrdinalIgnoreCase:
                     return FormatProvider.CompareOrdinalIgnoreCase(strA, 0, strA.Length, strB, 0, strB.Length);
 
+                case StringComparison.InvariantCulture:
+                    return CultureInfo.InvariantCulture.CompareInfo.Compare(strA, strB, CompareOptions.None);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return CultureInfo.InvariantCulture.CompareInfo.Compare(strA, strB, CompareOptions.IgnoreCase);
+
                 default:
                     throw new NotSupportedException(SR.NotSupported_StringComparison);
             }
@@ -644,6 +651,12 @@ namespace System
                 case StringComparison.OrdinalIgnoreCase:
                     return FormatProvider.CompareOrdinalIgnoreCase(strA, indexA, lengthA, strB, indexB, lengthB);
 
+                case StringComparison.InvariantCulture:
+                    return CultureInfo.InvariantCulture.CompareInfo.Compare(strA, indexA, lengthA, strB, indexB, lengthB, CompareOptions.None);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return CultureInfo.InvariantCulture.CompareInfo.Compare(strA, indexA, lengthA, strB, indexB, lengthB, CompareOptions.IgnoreCase);
+
                 default:
                     throw new ArgumentException(SR.NotSupported_StringComparison);
             }
@@ -800,6 +813,12 @@ namespace System
                 case StringComparison.OrdinalIgnoreCase:
                     return this.Length < value.Length ? false : (FormatProvider.CompareOrdinalIgnoreCase(this, this.Length - value.Length, value.Length, value, 0, value.Length) == 0);
 
+                case StringComparison.InvariantCulture:
+                    return CultureInfo.InvariantCulture.CompareInfo.IsSuffix(this, value, CompareOptions.None);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return CultureInfo.InvariantCulture.CompareInfo.IsSuffix(this, value, CompareOptions.IgnoreCase);
+
                 default:
                     throw new ArgumentException(SR.NotSupported_StringComparison, nameof(comparisonType));
             }
@@ -912,6 +931,12 @@ namespace System
                         return FormatProvider.CompareOrdinalIgnoreCase(this, 0, this.Length, value, 0, value.Length) == 0;
                     }
 
+                case StringComparison.InvariantCulture:
+                    return (CultureInfo.InvariantCulture.CompareInfo.Compare(this, value, CompareOptions.None) == 0);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return (CultureInfo.InvariantCulture.CompareInfo.Compare(this, value, CompareOptions.IgnoreCase) == 0);
+
                 default:
                     throw new ArgumentException(SR.NotSupported_StringComparison, nameof(comparisonType));
             }
@@ -969,6 +994,13 @@ namespace System
                     {
                         return FormatProvider.CompareOrdinalIgnoreCase(a, 0, a.Length, b, 0, b.Length) == 0;
                     }
+
+                case StringComparison.InvariantCulture:
+                    return (CultureInfo.InvariantCulture.CompareInfo.Compare(a, b, CompareOptions.None) == 0);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return (CultureInfo.InvariantCulture.CompareInfo.Compare(a, b, CompareOptions.IgnoreCase) == 0);
+
                 default:
                     throw new ArgumentException(SR.NotSupported_StringComparison, nameof(comparisonType));
             }
@@ -996,14 +1028,23 @@ namespace System
         // they will return the same hash code.
         public override int GetHashCode()
         {
+            return Marvin.ComputeHash32(ref Unsafe.As<char, byte>(ref _firstChar), _stringLength * 2, Marvin.DefaultSeed);
+        }
+
+        // Use this if and only if you need the hashcode to not change across app domains (e.g. you have an app domain agile
+        // hash table).
+        internal int GetLegacyNonRandomizedHashCode()
+        {
             unsafe
             {
                 fixed (char* src = &_firstChar)
                 {
+                    Debug.Assert(src[this.Length] == '\0', "src[this.Length] == '\\0'");
+                    Debug.Assert(((int)src) % 4 == 0, "Managed string should start at 4 bytes boundary");
 #if BIT64
                     int hash1 = 5381;
-#else
-                    int hash1 = (5381 << 16) + 5381;
+#else // !BIT64 (32)
+                    int hash1 = (5381<<16) + 5381;
 #endif
                     int hash2 = hash1;
 
@@ -1019,20 +1060,21 @@ namespace System
                         hash2 = ((hash2 << 5) + hash2) ^ c;
                         s += 2;
                     }
-#else
-                    // 32bit machines.
-                    int* pint = (int*)src;
+#else // !BIT64 (32)
+                    // 32 bit machines.
+                    int* pint = (int *)src;
                     int len = this.Length;
-                    while (len > 0)
+                    while (len > 2)
                     {
                         hash1 = ((hash1 << 5) + hash1 + (hash1 >> 27)) ^ pint[0];
-                        if (len <= 2)
-                        {
-                            break;
-                        }
                         hash2 = ((hash2 << 5) + hash2 + (hash2 >> 27)) ^ pint[1];
                         pint += 2;
-                        len -= 4;
+                        len  -= 4;
+                    }
+
+                    if (len > 0)
+                    {
+                        hash1 = ((hash1 << 5) + hash1 + (hash1 >> 27)) ^ pint[0];
                     }
 #endif
                     return hash1 + (hash2 * 1566083941);
@@ -1096,6 +1138,12 @@ namespace System
                         return false;
                     }
                     return FormatProvider.CompareOrdinalIgnoreCase(this, 0, value.Length, value, 0, value.Length) == 0;
+
+                case StringComparison.InvariantCulture:
+                    return CultureInfo.InvariantCulture.CompareInfo.IsPrefix(this, value, CompareOptions.None);
+
+                case StringComparison.InvariantCultureIgnoreCase:
+                    return CultureInfo.InvariantCulture.CompareInfo.IsPrefix(this, value, CompareOptions.IgnoreCase);
 
                 default:
                     throw new ArgumentException(SR.NotSupported_StringComparison, nameof(comparisonType));

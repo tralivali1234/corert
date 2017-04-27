@@ -33,13 +33,11 @@ namespace System.Collections.Generic
         ThrowOnExisting = 2
     }
 
-    [RelocatedType("System.Collections")]
     [DebuggerTypeProxy(typeof(IDictionaryDebugView<,>))]
     [DebuggerDisplay("Count = {Count}")]
     [Serializable]
     public class Dictionary<TKey, TValue> : IDictionary<TKey, TValue>, IDictionary, IReadOnlyDictionary<TKey, TValue>, ISerializable, IDeserializationCallback
     {
-        [RelocatedType("System.Collections")]
         private struct Entry
         {
             public int hashCode;    // Lower 31 bits of hash code, -1 if unused
@@ -77,6 +75,11 @@ namespace System.Collections.Generic
             if (capacity < 0) throw new ArgumentOutOfRangeException(nameof(capacity), capacity, SR.ArgumentOutOfRange_NeedNonNegNum);
             if (capacity > 0) Initialize(capacity);
             this.comparer = comparer ?? EqualityComparer<TKey>.Default;
+
+            if (this.comparer == EqualityComparer<string>.Default)
+            {
+                this.comparer = (IEqualityComparer<TKey>)NonRandomizedStringEqualityComparer.Default;
+            }
         }
 
         public Dictionary(IDictionary<TKey, TValue> dictionary) : this(dictionary, null) { }
@@ -386,10 +389,7 @@ namespace System.Collections.Generic
             if (buckets == null) Initialize(0);
             int hashCode = comparer.GetHashCode(key) & 0x7FFFFFFF;
             int targetBucket = hashCode % buckets.Length;
-
-#if FEATURE_RANDOMIZED_STRING_HASHING
             int collisionCount = 0;
-#endif
 
             for (int i = buckets[targetBucket]; i >= 0; i = entries[i].next)
             {
@@ -409,9 +409,7 @@ namespace System.Collections.Generic
 
                     return false;
                 }
-#if FEATURE_RANDOMIZED_STRING_HASHING
                 collisionCount++;
-#endif
             }
 
             int index;
@@ -439,13 +437,12 @@ namespace System.Collections.Generic
             entries[index].value = value;
             buckets[targetBucket] = index;
             version++;
-#if FEATURE_RANDOMIZED_STRING_HASHING
-            if (collisionCount > HashHelpers.HashCollisionThreshold && HashHelpers.IsWellKnownEqualityComparer(comparer))
+
+            if (collisionCount > HashHelpers.HashCollisionThreshold && comparer is NonRandomizedStringEqualityComparer)
             {
-                comparer = (IEqualityComparer<TKey>)HashHelpers.GetRandomizedEqualityComparer(comparer);
+                comparer = (IEqualityComparer<TKey>)EqualityComparer<string>.Default;
                 Resize(entries.Length, true);
             }
-#endif
 
             return true;
         }
@@ -537,6 +534,9 @@ namespace System.Collections.Generic
             entries = newEntries;
         }
 
+        // The overload Remove(TKey key, out TValue value) is a copy of this method with one additional
+        // statement to copy the value for entry being removed into the output parameter.
+        // Code has been intentionally duplicated for performance reasons.
         public bool Remove(TKey key)
         {
             if (key == null)
@@ -572,6 +572,51 @@ namespace System.Collections.Generic
                     }
                 }
             }
+            return false;
+        }
+
+        // This overload is a copy of the overload Remove(TKey key) with one additional
+        // statement to copy the value for entry being removed into the output parameter.
+        // Code has been intentionally duplicated for performance reasons.
+        public bool Remove(TKey key, out TValue value)
+        {
+            if (key == null)
+            {
+                throw new ArgumentNullException(nameof(key));
+            }
+
+            if (buckets != null)
+            {
+                int hashCode = comparer.GetHashCode(key) & 0x7FFFFFFF;
+                int bucket = hashCode % buckets.Length;
+                int last = -1;
+                for (int i = buckets[bucket]; i >= 0; last = i, i = entries[i].next)
+                {
+                    if (entries[i].hashCode == hashCode && comparer.Equals(entries[i].key, key))
+                    {
+                        if (last < 0)
+                        {
+                            buckets[bucket] = entries[i].next;
+                        }
+                        else
+                        {
+                            entries[last].next = entries[i].next;
+                        }
+
+                        value = entries[i].value;
+
+                        entries[i].hashCode = -1;
+                        entries[i].next = freeList;
+                        entries[i].key = default(TKey);
+                        entries[i].value = default(TValue);
+                        freeList = i;
+                        freeCount++;
+                        version++;
+                        return true;
+                    }
+                }
+            }
+            value = default(TValue);
             return false;
         }
 
@@ -831,7 +876,6 @@ namespace System.Collections.Generic
             }
         }
 
-        [RelocatedType("System.Collections")]
         [Serializable]
         public struct Enumerator : IEnumerator<KeyValuePair<TKey, TValue>>,
             IDictionaryEnumerator
@@ -959,7 +1003,6 @@ namespace System.Collections.Generic
             }
         }
 
-        [RelocatedType("System.Collections")]
         [DebuggerTypeProxy(typeof(DictionaryKeyCollectionDebugView<,>))]
         [DebuggerDisplay("Count = {Count}")]
         [Serializable]
@@ -1114,7 +1157,6 @@ namespace System.Collections.Generic
                 get { return ((ICollection)dictionary).SyncRoot; }
             }
 
-            [RelocatedType("System.Collections")]
             [Serializable]
             public struct Enumerator : IEnumerator<TKey>, System.Collections.IEnumerator
             {
@@ -1192,7 +1234,6 @@ namespace System.Collections.Generic
             }
         }
 
-        [RelocatedType("System.Collections")]
         [DebuggerTypeProxy(typeof(DictionaryValueCollectionDebugView<,>))]
         [DebuggerDisplay("Count = {Count}")]
         [Serializable]
@@ -1345,7 +1386,6 @@ namespace System.Collections.Generic
                 get { return ((ICollection)dictionary).SyncRoot; }
             }
 
-            [RelocatedType("System.Collections")]
             [Serializable]
             public struct Enumerator : IEnumerator<TValue>, System.Collections.IEnumerator
             {

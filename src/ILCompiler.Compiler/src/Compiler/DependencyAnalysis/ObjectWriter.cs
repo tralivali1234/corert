@@ -35,7 +35,7 @@ namespace ILCompiler.DependencyAnalysis
         private Dictionary<int, DebugLocInfo> _offsetToDebugLoc = new Dictionary<int, DebugLocInfo>();
 
         // Code offset to defined names
-        private Dictionary<int, List<ISymbolNode>> _offsetToDefName = new Dictionary<int, List<ISymbolNode>>();
+        private Dictionary<int, List<ISymbolDefinitionNode>> _offsetToDefName = new Dictionary<int, List<ISymbolDefinitionNode>>();
 
         // Code offset to Cfi blobs
         private Dictionary<int, List<byte[]>> _offsetToCfis = new Dictionary<int, List<byte[]>>();
@@ -184,6 +184,14 @@ namespace ILCompiler.DependencyAnalysis
         private static extern int EmitSymbolRef(IntPtr objWriter, byte[] symbolName, RelocType relocType, int delta);
         public int EmitSymbolRef(Utf8StringBuilder symbolName, RelocType relocType, int delta = 0)
         {
+            // Workaround for ObjectWriter's lack of support for IMAGE_REL_BASED_RELPTR32
+            // https://github.com/dotnet/corert/issues/3278
+            if (relocType == RelocType.IMAGE_REL_BASED_RELPTR32)
+            {
+                relocType = RelocType.IMAGE_REL_BASED_REL32;
+                delta = checked(delta + sizeof(int));
+            }
+
             return EmitSymbolRef(_nativeObjectWriter, symbolName.Append('\0').UnderlyingArray, relocType, delta);
         }
 
@@ -519,7 +527,7 @@ namespace ILCompiler.DependencyAnalysis
 
                 if (i != 0)
                 {
-                    EmitSymbolRef(_sb.Clear().Append("_lsda0").Append(_currentNodeZeroTerminatedName), RelocType.IMAGE_REL_BASED_REL32, 4);
+                    EmitSymbolRef(_sb.Clear().Append("_lsda0").Append(_currentNodeZeroTerminatedName), RelocType.IMAGE_REL_BASED_RELPTR32);
 
                     // emit relative offset from the main function
                     EmitIntValue((ulong)(start - frameInfos[0].StartOffset), 4);
@@ -527,7 +535,7 @@ namespace ILCompiler.DependencyAnalysis
 
                 if (ehInfo != null)
                 {
-                    EmitSymbolRef(_sb.Clear().Append("_ehInfo").Append(_currentNodeZeroTerminatedName), RelocType.IMAGE_REL_BASED_REL32, 4);
+                    EmitSymbolRef(_sb.Clear().Append("_ehInfo").Append(_currentNodeZeroTerminatedName), RelocType.IMAGE_REL_BASED_RELPTR32);
                 }
 
                 if (gcInfo != null)
@@ -621,20 +629,20 @@ namespace ILCompiler.DependencyAnalysis
             }
         }
 
-        public void BuildSymbolDefinitionMap(ObjectNode node, ISymbolNode[] definedSymbols)
+        public void BuildSymbolDefinitionMap(ObjectNode node, ISymbolDefinitionNode[] definedSymbols)
         {
             _offsetToDefName.Clear();
-            foreach (ISymbolNode n in definedSymbols)
+            foreach (ISymbolDefinitionNode n in definedSymbols)
             {
                 if (!_offsetToDefName.ContainsKey(n.Offset))
                 {
-                    _offsetToDefName[n.Offset] = new List<ISymbolNode>();
+                    _offsetToDefName[n.Offset] = new List<ISymbolDefinitionNode>();
                 }
 
                 _offsetToDefName[n.Offset].Add(n);
             }
 
-            var symbolNode = node as ISymbolNode;
+            var symbolNode = node as ISymbolDefinitionNode;
             if (symbolNode != null)
             {
                 _sb.Clear();
@@ -665,7 +673,7 @@ namespace ILCompiler.DependencyAnalysis
             AppendExternCPrefix(_sb);
             target.AppendMangledName(_nodeFactory.NameMangler, _sb);
 
-            return EmitSymbolRef(_sb, relocType, delta);
+            return EmitSymbolRef(_sb, relocType, checked(delta + target.Offset));
         }
 
         public void EmitBlobWithRelocs(byte[] blob, Relocation[] relocs)
@@ -712,7 +720,7 @@ namespace ILCompiler.DependencyAnalysis
 
         public void EmitSymbolDefinition(int currentOffset)
         {
-            List<ISymbolNode> nodes;
+            List<ISymbolDefinitionNode> nodes;
             if (_offsetToDefName.TryGetValue(currentOffset, out nodes))
             {
                 foreach (var name in nodes)

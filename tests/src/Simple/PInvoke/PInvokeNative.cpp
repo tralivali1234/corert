@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #ifdef Windows_NT
 #include <windows.h>
 #define DLL_EXPORT extern "C" __declspec(dllexport)
@@ -16,6 +17,11 @@
 #if !defined(__stdcall)
 #define __stdcall
 #endif
+
+#if (_MSC_VER >= 1400)         // Check MSC version
+#pragma warning(push)
+#pragma warning(disable: 4996) // Disable deprecation
+#endif 
 
 void* MemAlloc(long bytes)
 {
@@ -112,22 +118,7 @@ DLL_EXPORT bool __stdcall GetNextChar(short *value)
 
 int CompareAnsiString(const char *val, const char * expected)
 {
-    if (val == NULL && expected == NULL)
-        return 1;
-
-    if (val == NULL || expected == NULL)
-        return 0;
-
-    const char *p = expected;
-    const char *q = val;
-
-    while (*p  && *q && *p == *q)
-    {
-        p++;
-        q++;
-    }
-
-    return *p == 0 && *q == 0;
+    return strcmp(val, expected) == 0 ? 1 : 0;
 }
 
 int CompareUnicodeString(const unsigned short *val, const unsigned short *expected)
@@ -333,21 +324,97 @@ DLL_EXPORT bool __stdcall ReversePInvoke_Int(int(__stdcall *fnPtr) (int, int, in
     return fnPtr(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) == 55;
 }
 
-DLL_EXPORT bool __stdcall ReversePInvoke_String(bool(__stdcall *fnPtr) (char *))
+typedef bool(__stdcall *StringFuncPtr) (char *);
+DLL_EXPORT bool __stdcall ReversePInvoke_String(StringFuncPtr fnPtr)
 {
     char str[] = "Hello World";
     return fnPtr(str);
 }
 
-DLL_EXPORT void __stdcall VerifyStringBuilder(unsigned short *val)
+bool CheckString(char *str)
 {
-    char str[] = "Hello World";
-    int i;
-    for (i = 0; str[i] != '\0'; i++)
-        val[i] = (unsigned short)str[i];
-    val[i] = 0;
+   return CompareAnsiString(str, "Hello World!") == 1;
 }
 
+
+DLL_EXPORT StringFuncPtr __stdcall GetDelegate()
+{
+    return CheckString;
+}
+
+DLL_EXPORT bool __stdcall Callback(StringFuncPtr *fnPtr)
+{
+    char str[] = "Hello World";
+    if ((*fnPtr)(str) == false)
+      return false;
+   *fnPtr = CheckString;
+   return true;
+}
+
+// returns
+// -1 if val is null
+//  1 if val is "Hello World"
+//  0 otherwise
+DLL_EXPORT int __stdcall VerifyUnicodeStringBuilder(unsigned short *val)
+{
+    if (val == NULL)
+        return -1;
+
+    if (!VerifyUnicodeString(val))
+        return 0;
+
+    for (int i = 0; val[i] != '\0'; i++)
+    {
+        if ((char)val[i] >= 'a' && (char)val[i] <= 'z')
+        {
+            val[i] += 'A' - 'a';
+        }
+    }
+    return 1;
+}
+
+DLL_EXPORT int __stdcall VerifyUnicodeStringBuilderOut(unsigned short *val)
+{
+    if (val == NULL)
+        return 0;
+
+    unsigned short src[] = { 'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd', 0 };
+    for (int i = 0; i < 12; i++)
+        val[i] = src[i];
+    
+    return 1;
+}
+
+DLL_EXPORT int __stdcall VerifyAnsiStringBuilderOut(char *val)
+{
+    if (val == NULL)
+        return 0;
+
+    CopyAnsiString(val, "Hello World!");
+    return 1;
+}
+
+// returns
+// -1 if val is null
+//  1 if val is "Hello World"
+//  0 otherwise
+DLL_EXPORT int __stdcall VerifyAnsiStringBuilder(char *val)
+{
+    if (val == NULL)
+        return -1;
+
+    if (!VerifyAnsiString(val))
+        return 0;
+
+    for (int i = 0; val[i] != '\0'; i++)
+    {
+        if (val[i] >= 'a' && val[i] <= 'z')
+        {
+             val[i] += 'A' - 'a';
+        }
+    }
+    return 1;
+}
 
 DLL_EXPORT int* __stdcall ReversePInvoke_Unused(void(__stdcall *fnPtr) (void))
 {
@@ -360,6 +427,12 @@ struct NativeSequentialStruct
     int a;
     float b;
     char *str;
+};
+
+struct NativeSequentialStruct2
+{
+    float a;
+    int b;
 };
 
 DLL_EXPORT bool __stdcall StructTest(NativeSequentialStruct nss)
@@ -376,6 +449,17 @@ DLL_EXPORT bool __stdcall StructTest(NativeSequentialStruct nss)
 
     if (!CompareAnsiString(nss.str, "Hello"))
         return false;
+
+    return true;
+}
+
+DLL_EXPORT bool __stdcall StructTest_Sequential2(NativeSequentialStruct2 nss)
+{
+    if (nss.a != 10.0)
+        return false;
+
+    if (nss.b != 123)
+       return false;
 
     return true;
 }
@@ -410,6 +494,31 @@ DLL_EXPORT void __stdcall StructTest_ByOut(NativeSequentialStruct *nss)
     *(p + arrSize) = '\0';
     nss->str = p;
 }
+
+DLL_EXPORT bool __stdcall StructTest_Array(NativeSequentialStruct *nss, int length)
+{
+    if (nss == NULL)
+        return false;
+    
+    char expected[16];
+
+    for (int i = 0; i < 3; i++)
+    {
+        if (nss[i].s != 0)
+            return false;
+        if (nss[i].a != i)
+            return false;
+        if (nss[i].b != i*i)
+            return false;
+        sprintf(expected, "%d", i);
+
+        if (CompareAnsiString(expected, nss[i].str) == 0)
+            return false;
+    }
+    return true;
+}
+
+
 
 typedef struct {
     int a;
@@ -488,3 +597,6 @@ DLL_EXPORT bool __stdcall StructTest_Nested(NativeNestedStruct nns)
     return StructTest_Explicit(nns.nes);
 }
 
+#if (_MSC_VER >= 1400)         // Check MSC version
+#pragma warning(pop)           // Renable previous depreciations
+#endif

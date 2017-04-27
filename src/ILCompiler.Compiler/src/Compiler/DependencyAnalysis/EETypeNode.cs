@@ -56,7 +56,7 @@ namespace ILCompiler.DependencyAnalysis
     ///                 |
     /// [Pointer Size]  | Pointer to the generic argument and variance info (optional)
     /// </summary>
-    public partial class EETypeNode : ObjectNode, ISymbolNode, IEETypeNode
+    public partial class EETypeNode : ObjectNode, IExportableSymbolNode, IEETypeNode, ISymbolDefinitionNode
     {
         protected TypeDesc _type;
         internal EETypeOptionalFieldsBuilder _optionalFieldsBuilder = new EETypeOptionalFieldsBuilder();
@@ -89,6 +89,13 @@ namespace ILCompiler.DependencyAnalysis
 
             return false;
         }
+
+        public override ObjectNode NodeForLinkage(NodeFactory factory)
+        {
+            return (ObjectNode)factory.NecessaryTypeSymbol(_type);
+        }
+
+        public virtual bool IsExported(NodeFactory factory) => factory.CompilationModuleGroup.ExportsType(Type);
 
         public TypeDesc Type => _type;
 
@@ -134,7 +141,9 @@ namespace ILCompiler.DependencyAnalysis
             sb.Append("__EEType_").Append(nameMangler.GetMangledTypeName(_type));
         }
 
-        public int Offset => GCDescSize;
+        int ISymbolNode.Offset => 0;
+        int ISymbolDefinitionNode.Offset => GCDescSize;
+
         public override bool IsShareable => IsTypeNodeShareable(_type);
 
         public static bool IsTypeNodeShareable(TypeDesc type)
@@ -151,6 +160,53 @@ namespace ILCompiler.DependencyAnalysis
             // generate any relocs to it, and the optional fields node will instruct the object writer to skip
             // emitting it.
             dependencies.Add(new DependencyListEntry(_optionalFieldsNode, "Optional fields"));
+
+            // Dependencies of the StaticsInfoHashTable and the ReflectionFieldAccessMap
+            if (_type is MetadataType && !_type.IsCanonicalSubtype(CanonicalFormKind.Any))
+            {
+                MetadataType metadataType = (MetadataType)_type;
+
+                // NOTE: The StaticsInfoHashtable entries need to reference the gc and non-gc static nodes through an indirection cell.
+                // The StaticsInfoHashtable entries only exist for static fields on generic types.
+
+                if (metadataType.GCStaticFieldSize.AsInt > 0)
+                {
+                    ISymbolNode gcStatics = factory.TypeGCStaticsSymbol(metadataType);
+                    if (_type.HasInstantiation)
+                    {
+                        dependencies.Add(factory.Indirection(gcStatics), "GC statics indirection for StaticsInfoHashtable");
+                    }
+                    else
+                    {
+                        // TODO: https://github.com/dotnet/corert/issues/3224
+                        // Reflection static field bases handling is here because in the current reflection model we reflection-enable
+                        // all fields of types that are compiled. Ideally the list of reflection enabled fields should be known before
+                        // we even start the compilation process (with the static bases being compilation roots like any other).
+                        dependencies.Add(gcStatics, "GC statics for ReflectionFieldMap entry");
+                    }
+                }
+                if (metadataType.NonGCStaticFieldSize.AsInt > 0)
+                {
+                    ISymbolNode nonGCStatic = factory.TypeNonGCStaticsSymbol(metadataType);
+                    if (_type.HasInstantiation)
+                    {
+                        // The entry in the StaticsInfoHashtable points at the beginning of the static fields data, rather than the cctor 
+                        // context offset.
+                        nonGCStatic = factory.Indirection(nonGCStatic);
+                        dependencies.Add(nonGCStatic, "Non-GC statics indirection for StaticsInfoHashtable");
+                    }
+                    else
+                    {
+                        // TODO: https://github.com/dotnet/corert/issues/3224
+                        // Reflection static field bases handling is here because in the current reflection model we reflection-enable
+                        // all fields of types that are compiled. Ideally the list of reflection enabled fields should be known before
+                        // we even start the compilation process (with the static bases being compilation roots like any other).
+                        dependencies.Add(nonGCStatic, "Non-GC statics for ReflectionFieldMap entry");
+                    }
+                }
+
+                // TODO: TLS dependencies
+            }
 
             return dependencies;
         }
@@ -181,7 +237,7 @@ namespace ILCompiler.DependencyAnalysis
             if (EmitVirtualSlotsAndInterfaces)
             {
                 // Emit VTable
-                Debug.Assert(objData.CountBytes - Offset == GetVTableOffset(objData.TargetPointerSize));
+                Debug.Assert(objData.CountBytes - ((ISymbolDefinitionNode)this).Offset == GetVTableOffset(objData.TargetPointerSize));
                 SlotCounter virtualSlotCounter = SlotCounter.BeginCounting(ref /* readonly */ objData);
                 OutputVirtualSlots(factory, ref objData, _type, _type, relocsOnly);
 
@@ -240,7 +296,7 @@ namespace ILCompiler.DependencyAnalysis
             }
             else if (_type.IsString)
             {
-                objData.EmitShort(2);
+                objData.EmitShort(StringComponentSize.Value);
             }
             else
             {

@@ -207,6 +207,16 @@ namespace ILCompiler
             return type.HasCustomAttribute("System.Runtime.CompilerServices", "ReflectionBlockedAttribute");
         }
 
+        public override bool WillUseMetadataTokenToReferenceMethod(MethodDesc method)
+        {
+            return _compilationModuleGroup.ContainsType(method.GetTypicalMethodDefinition().OwningType);
+        }
+
+        public override bool WillUseMetadataTokenToReferenceField(FieldDesc field)
+        {
+            return _compilationModuleGroup.ContainsType(field.GetTypicalFieldDefinition().OwningType);
+        }
+
         protected override void ComputeMetadata(NodeFactory factory, out byte[] metadataBlob, out List<MetadataMapping<MetadataType>> typeMappings, out List<MetadataMapping<MethodDesc>> methodMappings, out List<MetadataMapping<FieldDesc>> fieldMappings)
         {
             MetadataLoadedInfo loadedMetadata = _loadedMetadata.Value;
@@ -251,33 +261,32 @@ namespace ILCompiler
 
             foreach (var method in GetCompiledMethods())
             {
+                if (!MethodCanBeInvokedViaReflection(factory, method))
+                    continue;
+
+                // If there is a possible canonical method, use that instead of a specific method (folds canonically equivalent methods away)
+                if (method.GetCanonMethodTarget(CanonicalFormKind.Specific) != method)
+                    continue;
+
                 int token;
                 if (loadedMetadata.MethodMappings.TryGetValue(method.GetTypicalMethodDefinition(), out token))
                 {
-                    MethodDesc invokeMapMethod = method;
-                    if (method.HasInstantiation && method.IsCanonicalMethod(CanonicalFormKind.Specific))
-                    {
-                        Debug.Assert(canonicalToSpecificMethods.ContainsKey(method));
+                    MethodDesc invokeMapMethod = GetInvokeMapMethodForMethod(canonicalToSpecificMethods, method);
 
-                        invokeMapMethod = canonicalToSpecificMethods[method];
-                    }
+                    if (invokeMapMethod != null)
+                        methodMappings.Add(new MetadataMapping<MethodDesc>(invokeMapMethod, token));
+                }
+                else if (!WillUseMetadataTokenToReferenceMethod(method) && 
+                    _compilationModuleGroup.ContainsMethod(method.GetCanonMethodTarget(CanonicalFormKind.Specific)))
+                {
+                    MethodDesc invokeMapMethod = GetInvokeMapMethodForMethod(canonicalToSpecificMethods, method);
 
-                    // Non-generic instance canonical methods on generic structures are only available in the invoke map
-                    // if the unboxing stub entrypoint is marked already (which will mean that the unboxing stub
-                    // has been compiled, On ProjectN abi, this may will not be triggered by the CodeBasedDependencyAlgorithm.
-                    // See the ProjectN abi specific code in there.
-                    if (!method.HasInstantiation && method.OwningType.IsValueType && !method.Signature.IsStatic)
-                    {
-                        MethodDesc canonicalMethod = method.GetCanonMethodTarget(CanonicalFormKind.Specific);
-
-                        if (canonicalMethod.OwningType.IsCanonicalSubtype(CanonicalFormKind.Any))
-                        {
-                            if (!factory.MethodEntrypoint(canonicalMethod, true).Marked)
-                                continue;
-                        }
-                    }
-
-                    methodMappings.Add(new MetadataMapping<MethodDesc>(invokeMapMethod, token));
+                    // For methods on types that are not in the current module, assume they must be reflectable
+                    // and generate a non-metadata backed invoke table entry
+                    // TODO, the above computation is overly generous with the set of methods that are placed into the method invoke map
+                    // It includes methods which are not reflectable at all.
+                    if (invokeMapMethod != null)
+                        methodMappings.Add(new MetadataMapping<MethodDesc>(invokeMapMethod, 0));
                 }
             }
 
@@ -302,8 +311,53 @@ namespace ILCompiler
                     {
                         fieldMappings.Add(new MetadataMapping<FieldDesc>(field, token));
                     }
+                    else if (!WillUseMetadataTokenToReferenceField(field))
+                    {
+                        // TODO, the above computation is overly generous with the set of fields that are placed into the field invoke map
+                        // It includes fields which are not reflectable at all, and collapses static fields across generics
+
+                        // TODO! enable this. Disabled due to cross module import of statics is not yet implemented
+                        // fieldMappings.Add(new MetadataMapping<FieldDesc>(field, 0));
+                    }
                 }
             }
+        }
+
+        private bool MethodCanBeInvokedViaReflection(NodeFactory factory, MethodDesc method)
+        {
+            // Non-generic instance canonical methods on generic structures are only available in the invoke map
+            // if the unboxing stub entrypoint is marked already (which will mean that the unboxing stub
+            // has been compiled, On ProjectN abi, this may will not be triggered by the CodeBasedDependencyAlgorithm.
+            // See the ProjectN abi specific code in there.
+            if (!method.HasInstantiation && method.OwningType.IsValueType && !method.Signature.IsStatic)
+            {
+                MethodDesc canonicalMethod = method.GetCanonMethodTarget(CanonicalFormKind.Specific);
+
+                if (canonicalMethod.OwningType.IsCanonicalSubtype(CanonicalFormKind.Any))
+                {
+                    if (!factory.MethodEntrypoint(canonicalMethod, true).Marked)
+                        return false;
+                }
+            }
+            return true;
+        }
+
+        private MethodDesc GetInvokeMapMethodForMethod(Dictionary<MethodDesc, MethodDesc> canonicalToSpecificMethods, MethodDesc method)
+        {
+            MethodDesc invokeMapMethod = method;
+            if (method.HasInstantiation && method.IsCanonicalMethod(CanonicalFormKind.Specific))
+            {
+                // Under optimization when a generic method makes no use of its generic dictionary
+                // the compiler can sometimes generate code for a canonical generic
+                // method, but not detect the need for a generic dictionary. We cannot currently
+                // represent this state in our invoke mapping tables, and must skip emitting a record into them
+                if (!canonicalToSpecificMethods.ContainsKey(method))
+                    return null;
+
+                invokeMapMethod = canonicalToSpecificMethods[method];
+            }
+
+            return invokeMapMethod;
         }
 
         private Dictionary<MethodDesc, MethodDesc> LoadDynamicInvokeStubs()
@@ -359,7 +413,7 @@ namespace ILCompiler
             if (reflectionInvokeStub == null)
                 return false;
 
-            // TODO: Generate DynamicInvokeTemplateMap. For now, force all canonical stubs to go through the 
+            // TODO: Generate DynamicInvokeTemplateMap dependencies correctly. For now, force all canonical stubs to go through the 
             // calling convention converter interpreter path.
             if (reflectionInvokeStub.GetCanonMethodTarget(CanonicalFormKind.Specific) != reflectionInvokeStub)
                 return false;

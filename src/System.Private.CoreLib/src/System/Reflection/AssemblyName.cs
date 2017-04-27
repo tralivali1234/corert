@@ -224,8 +224,28 @@ namespace System.Reflection
             _siInfo = null;
         }
 
-        public static AssemblyName GetAssemblyName(string assemblyFile) { throw new NotImplementedException(); }
-        public static bool ReferenceMatchesDefinition(AssemblyName reference, AssemblyName definition) { throw new NotImplementedException(); }
+        public static AssemblyName GetAssemblyName(string assemblyFile) { throw new NotImplementedException(); } // TODO: https://github.com/dotnet/corert/issues/3253
+
+        /// <summary>
+        /// Compares the simple names disregarding Version, Culture and PKT. While this clearly does not
+        /// match the intent of this api, this api has been broken this way since its debut and we cannot
+        /// change its behavior now.
+        /// </summary>
+        public static bool ReferenceMatchesDefinition(AssemblyName reference, AssemblyName definition)
+        {
+            if (object.ReferenceEquals(reference, definition))
+                return true;
+
+            if (reference == null)
+                throw new ArgumentNullException(nameof(reference));
+
+            if (definition == null)
+                throw new ArgumentNullException(nameof(definition));
+
+            string refName = reference.Name ?? string.Empty;
+            string defName = definition.Name ?? string.Empty;
+            return refName.Equals(defName, StringComparison.OrdinalIgnoreCase);
+        }
 
         internal static string EscapeCodeBase(string codebase) { throw new PlatformNotSupportedException(); }
 

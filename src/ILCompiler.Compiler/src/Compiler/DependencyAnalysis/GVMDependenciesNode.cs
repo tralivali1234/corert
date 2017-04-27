@@ -38,20 +38,24 @@ namespace ILCompiler.DependencyAnalysis
 
         public override IEnumerable<DependencyListEntry> GetStaticDependencies(NodeFactory context)
         {
+            // TODO: https://github.com/dotnet/corert/issues/3224
             // Reflection invoke stub handling is here because in the current reflection model we reflection-enable
             // all methods that are compiled. Ideally the list of reflection enabled methods should be known before
             // we even start the compilation process (with the invocation stubs being compilation roots like any other).
             // The existing model has it's problems: e.g. the invocability of the method depends on inliner decisions.
             if (context.MetadataManager.IsReflectionInvokable(_method) && _method.IsAbstract)
             {
-                List<DependencyListEntry> dependencies = new List<DependencyListEntry>();
+                DependencyList dependencies = new DependencyList();
 
                 if (context.MetadataManager.HasReflectionInvokeStubForInvokableMethod(_method) && !_method.IsCanonicalMethod(CanonicalFormKind.Any))
                 {
                     MethodDesc invokeStub = context.MetadataManager.GetReflectionInvokeStub(_method);
                     MethodDesc canonInvokeStub = invokeStub.GetCanonMethodTarget(CanonicalFormKind.Specific);
                     if (invokeStub != canonInvokeStub)
-                        dependencies.Add(new DependencyListEntry(context.FatFunctionPointer(invokeStub), "Reflection invoke"));
+                    {
+                        dependencies.Add(new DependencyListEntry(context.MetadataManager.DynamicInvokeTemplateData, "Reflection invoke template data"));
+                        context.MetadataManager.DynamicInvokeTemplateData.AddDependenciesDueToInvokeTemplatePresence(ref dependencies, context, canonInvokeStub);
+                    }
                     else
                         dependencies.Add(new DependencyListEntry(context.MethodEntrypoint(invokeStub), "Reflection invoke"));
                 }
@@ -88,6 +92,12 @@ namespace ILCompiler.DependencyAnalysis
             Debug.Assert(_method.IsVirtual && _method.HasInstantiation);
 
             List<CombinedDependencyListEntry> dynamicDependencies = new List<CombinedDependencyListEntry>();
+
+            // Disable dependence tracking for ProjectN
+            if (factory.Target.Abi == TargetAbi.ProjectN)
+            {
+                return dynamicDependencies;
+            }
 
             for (int i = firstNode; i < markedNodes.Count; i++)
             {

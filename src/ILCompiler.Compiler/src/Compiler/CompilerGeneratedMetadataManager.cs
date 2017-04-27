@@ -84,6 +84,16 @@ namespace ILCompiler
             return _metadataPolicy.IsBlocked(type);
         }
 
+        public override bool WillUseMetadataTokenToReferenceMethod(MethodDesc method)
+        {
+            return _compilationModuleGroup.ContainsType(method.GetTypicalMethodDefinition().OwningType);
+        }
+
+        public override bool WillUseMetadataTokenToReferenceField(FieldDesc field)
+        {
+            return _compilationModuleGroup.ContainsType(field.GetTypicalFieldDefinition().OwningType);
+        }
+
         protected override void ComputeMetadata(NodeFactory factory,
                                                 out byte[] metadataBlob, 
                                                 out List<MetadataMapping<MetadataType>> typeMappings,

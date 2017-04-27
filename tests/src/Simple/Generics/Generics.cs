@@ -27,6 +27,7 @@ class Program
         TestMDArrayAddressMethod.Run();
         TestNameManglingCollisionRegression.Run();
         TestSimpleGVMScenarios.Run();
+        TestGvmDelegates.Run();
         TestGvmDependencies.Run();
         TestFieldAccess.Run();
 
@@ -263,6 +264,34 @@ class Program
             }
         }
 
+        class FooShared
+        {
+            public readonly int Value;
+            public FooShared(int value)
+            {
+                Value = value;
+            }
+
+            public override string ToString()
+            {
+                return Value.ToString();
+            }
+        }
+
+        class BarShared
+        {
+            public readonly int Value;
+            public BarShared(int value)
+            {
+                Value = value;
+            }
+
+            public override string ToString()
+            {
+                return Value.ToString();
+            }
+        }
+
         class GenClass<T>
         {
             public readonly T X;
@@ -281,7 +310,7 @@ class Program
             public string MakeGenString<U>()
             {
                 // Use a constructed type that is not used elsewhere
-                return typeof(T[,,]).GetElementType().Name + ", " + 
+                return typeof(T[,,]).GetElementType().Name + ", " +
                     typeof(U[,,,]).GetElementType().Name + ": " + X.ToString();
             }
         }
@@ -306,6 +335,44 @@ class Program
                 // Use a constructed type that is not used elsewhere
                 return typeof(T[,,]).GetElementType().Name + ", " +
                     typeof(U[,,,]).GetElementType().Name + ": " + X.ToString();
+            }
+        }
+
+        private static void RunReferenceTypeShared<T>(T value)
+        {
+            // Delegate to a shared nongeneric reference type instance method
+            {
+                GenClass<T> g = new GenClass<T>(value);
+                Func<string> f = g.MakeString;
+                if (f() != "FooShared: 42")
+                    throw new Exception();
+            }
+
+            // Delegate to a shared generic reference type instance method
+            {
+                GenClass<T> g = new GenClass<T>(value);
+                Func<string> f = g.MakeGenString<T>;
+                if (f() != "FooShared, FooShared: 42")
+                    throw new Exception();
+            }
+        }
+
+        private static void RunValueTypeShared<T>(T value)
+        {
+            // Delegate to a shared nongeneric value type instance method
+            {
+                GenStruct<T> g = new GenStruct<T>(value);
+                Func<string> f = g.MakeString;
+                if (f() != "BarShared: 42")
+                    throw new Exception();
+            }
+
+            // Delegate to a shared generic value type instance method
+            {
+                GenStruct<T> g = new GenStruct<T>(value);
+                Func<string> f = g.MakeGenString<T>;
+                if (f() != "BarShared, BarShared: 42")
+                    throw new Exception();
             }
         }
 
@@ -344,12 +411,12 @@ class Program
             }
 
             // Delegate to a shared nongeneric value type instance method
-            /*{
+            {
                 GenStruct<Bar> g = new GenStruct<Bar>(new Bar(42));
                 Func<string> f = g.MakeString;
                 if (f() != "Bar: 42")
                     throw new Exception();
-            }*/
+            }
 
             // Delegate to a unshared nongeneric value type instance method
             {
@@ -360,12 +427,12 @@ class Program
             }
 
             // Delegate to a shared generic value type instance method
-            /*{
+            {
                 GenStruct<Bar> g = new GenStruct<Bar>(new Bar(42));
                 Func<string> f = g.MakeGenString<Bar>;
                 if (f() != "Bar, Bar: 42")
                     throw new Exception();
-            }*/
+            }
 
             // Delegate to a unshared generic value type instance method
             {
@@ -375,6 +442,9 @@ class Program
                     throw new Exception();
             }
 
+            // Now the same from shared code
+            RunReferenceTypeShared<FooShared>(new FooShared(42));
+            RunValueTypeShared<BarShared>(new BarShared(42));
         }
     }
 
@@ -706,11 +776,11 @@ class Program
             }
 
             // Uncomment when we have the type loader to buld invoke stub dictionaries.
-            /*{
+            {
                 MethodInfo mi = typeof(Foo<string>).GetTypeInfo().GetDeclaredMethod("SetAndCheck").MakeGenericMethod(typeof(object));
                 if ((bool)mi.Invoke(o, new object[] { 123, new object() }))
                     s_NumErrors++;
-            }*/
+            }
 
             // VirtualInvokeMap testing
             {
@@ -1039,13 +1109,13 @@ class Program
     {
         class Gen1<T>
         {
-            public Gen1(T t) {}
+            public Gen1(T t) { }
         }
 
         public static void Run()
         {
             Gen1<object[]>[] g1 = new Gen1<object[]>[1];
-            g1[0] = new Gen1<object[]>(new object[] {new object[1]});
+            g1[0] = new Gen1<object[]>(new object[] { new object[1] });
 
             Gen1<object[][]> g2 = new Gen1<object[][]>(new object[1][]);
         }
@@ -1263,6 +1333,51 @@ class Program
         }
     }
 
+    class TestGvmDelegates
+    {
+        class Atom { }
+
+        interface IFoo
+        {
+            string Frob<T>(int arg);
+        }
+
+        class FooUnshared : IFoo
+        {
+            public string Frob<T>(int arg)
+            {
+                return typeof(T[,]).GetElementType().Name + arg.ToString();
+            }
+        }
+
+        class FooShared : IFoo
+        {
+            public string Frob<T>(int arg)
+            {
+                return typeof(T[,,]).GetElementType().Name + arg.ToString();
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        static void RunShared<T>(IFoo foo)
+        {
+            Func<int, string> a = foo.Frob<T>;
+            if (a(456) != "Atom456")
+                throw new Exception();
+        }
+
+        public static void Run()
+        {
+            IFoo foo = new FooUnshared();
+            Func<int, string> a = foo.Frob<Atom>;
+            if (a(123) != "Atom123")
+                throw new Exception();
+
+            // https://github.com/dotnet/corert/issues/2796
+            // RunShared<Atom>(new FooShared());
+        }
+    }
+
     class TestGvmDependencies
     {
         class Atom { }
@@ -1353,6 +1468,84 @@ class Program
             public object m_objectField;
         }
 
+        public class DynamicBase<T>
+        {
+            public T _t;
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public DynamicBase() {}
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public int SimpleMethod()
+            {
+                return 123;
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public int MethodWithTInSig(T t)
+            {
+                _t = t;
+                return 234;
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public virtual string VirtualMethod(T t)
+            {
+                _t = t;
+                return "DynamicBase<T>.VirtualMethod";
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public string GenericMethod<U>(T t, U u)
+            {
+                _t = t;
+                return typeof(U).ToString() + u.ToString();
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public virtual string GenericVirtualMethod<U>(T t, U u)
+            {
+                _t = t;
+                return "DynamicBase" + typeof(U).ToString() + u.ToString();
+            }
+        }
+
+        public class DynamicDerived<T> : DynamicBase<T>
+        {
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public DynamicDerived() {}
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public override string VirtualMethod(T t)
+            {
+                _t = t;
+                return "DynamicDerived<T>.VirtualMethod";
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public override string GenericVirtualMethod<U>(T t, U u)
+            {
+                _t = t;
+                return "DynamicDerived" + typeof(U).ToString() + u.ToString();
+            }
+        }
+
+        class UnconstructedTypeWithGCStatics
+        {
+#pragma warning disable 169
+            static string s_gcField;
+#pragma warning restore
+        }
+
+        class UnconstructedTypeWithNonGCStatics
+        {
+#pragma warning disable 169
+            static float s_nonGcField;
+#pragma warning restore
+        }
+
+        class UnconstructedTypeInstantiator<T> { }
+
         public static int s_FooClassTypeCctorCount = 0;
         public static int s_FooStructTypeCctorCount = 0;
         public static int s_BarCctorCount = 0;
@@ -1411,6 +1604,77 @@ class Program
             fi2.SetValue(null, "ytrewq");
             Verify("qwerty", (string)fi.GetValue(null));
             Verify("ytrewq", (string)fi2.GetValue(null));
+        }
+
+        private static void TestDynamicInvokeStubs()
+        {
+            Console.WriteLine("Testing dynamic invoke stubs...");
+            // Root required methods / types statically instantiated over some unrelated type
+            DynamicBase<Program> heh = new DynamicBase<Program>();
+            heh.MethodWithTInSig(new Program());
+            heh.SimpleMethod();
+            heh.VirtualMethod(new Program());
+            heh.GenericMethod(new Program(), "hello");
+            heh.GenericVirtualMethod(new Program(), "hello");
+
+            DynamicDerived<Program> heh2 = new DynamicDerived<Program>();
+            heh2.VirtualMethod(new Program());
+            heh2.GenericVirtualMethod(new Program(), "ayy");
+
+            // Simple method invocation
+            var dynamicBaseOfString = typeof(DynamicBase<>).MakeGenericType(typeof(string));
+            object obj = Activator.CreateInstance(dynamicBaseOfString);
+            {
+                var simpleMethod = dynamicBaseOfString.GetTypeInfo().GetDeclaredMethod("SimpleMethod");
+                int result = (int)simpleMethod.Invoke(obj, null);
+                Verify((int)123, result);
+            }
+
+            // Method with T in the signature
+            {
+                var methodWithTInSig = dynamicBaseOfString.GetTypeInfo().GetDeclaredMethod("MethodWithTInSig");
+                int result = (int)methodWithTInSig.Invoke(obj, new[] { "fad" });
+                Verify((int)234, result);
+            }
+
+            // Test virtual method invocation
+            {
+                var virtualMethodDynamicBase = dynamicBaseOfString.GetTypeInfo().GetDeclaredMethod("VirtualMethod");
+                string result = (string)virtualMethodDynamicBase.Invoke(obj, new[] { "fad" });
+                Verify("DynamicBase<T>.VirtualMethod", result);
+            }
+
+            {
+                var dynamicDerivedOfString = typeof(DynamicDerived<>).MakeGenericType(typeof(string));
+                object dynamicDerivedObj = Activator.CreateInstance(dynamicDerivedOfString);
+                var virtualMethodDynamicDerived = dynamicDerivedOfString.GetTypeInfo().GetDeclaredMethod("VirtualMethod");
+                string result = (string)virtualMethodDynamicDerived.Invoke(dynamicDerivedObj, new[] { "fad" });
+                Verify("DynamicDerived<T>.VirtualMethod", result);
+            }
+
+            // Test generic method invocation
+            {
+                var genericMethod = dynamicBaseOfString.GetTypeInfo().GetDeclaredMethod("GenericMethod").MakeGenericMethod(new[] { typeof(string) });
+                string result = (string)genericMethod.Invoke(obj, new[] { "hey", "hello" });
+
+                Verify("System.Stringhello", result);
+            }
+
+            // Test GVM invocation
+            {
+                var genericMethod = dynamicBaseOfString.GetTypeInfo().GetDeclaredMethod("GenericVirtualMethod");
+                genericMethod = genericMethod.MakeGenericMethod(new[] { typeof(string) });
+                string result = (string)genericMethod.Invoke(obj, new[] { "hey", "hello" });
+                Verify("DynamicBaseSystem.Stringhello", result);
+            }
+
+            {
+                var dynamicDerivedOfString = typeof(DynamicDerived<>).MakeGenericType(typeof(string));
+                object dynamicDerivedObj = Activator.CreateInstance(dynamicDerivedOfString);
+                var virtualMethodDynamicDerived = dynamicDerivedOfString.GetTypeInfo().GetDeclaredMethod("GenericVirtualMethod").MakeGenericMethod(new[] { typeof(string) });
+                string result = (string)virtualMethodDynamicDerived.Invoke(dynamicDerivedObj, new[] { "hey", "fad" });
+                Verify("DynamicDerivedSystem.Stringfad", result);
+            }
         }
 
         private static void TestStaticFields()
@@ -1627,11 +1891,21 @@ class Program
             }
         }
 
+        private static void TestUnconstructedTypes()
+        {
+            // Testing for compilation failures due to references to unused static bases
+            // See: https://github.com/dotnet/corert/issues/3211
+            var a = typeof(UnconstructedTypeInstantiator<UnconstructedTypeWithGCStatics>).ToString();
+            var b = typeof(UnconstructedTypeInstantiator<UnconstructedTypeWithNonGCStatics>).ToString();
+        }
+
         public static void Run()
         {
             TestStaticFields();
             TestInstanceFields();
             TestDynamicStaticFields();
+            TestDynamicInvokeStubs();
+            TestUnconstructedTypes();
 
             if (s_NumErrors != 0)
                 throw new Exception(s_NumErrors + " errors!");
