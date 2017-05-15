@@ -263,30 +263,16 @@ namespace ILCompiler.DependencyAnalysis
         private static extern uint GetClassTypeIndex(IntPtr objWriter, ClassTypeDescriptor classTypeDescriptor);
 
         [DllImport(NativeObjectWriterFileName)]
-        private static extern uint GetCompleteClassTypeIndex(IntPtr objWriter, ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptior classFieldsTypeDescriptior, DataFieldDescriptor[] fields);
+        private static extern uint GetCompleteClassTypeIndex(IntPtr objWriter, ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptor classFieldsTypeDescriptior, DataFieldDescriptor[] fields);
 
         public uint GetClassTypeIndex(ClassTypeDescriptor classTypeDescriptor)
         {
             return GetClassTypeIndex(_nativeObjectWriter, classTypeDescriptor);
         }
 
-        public uint GetCompleteClassTypeIndex(ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptior classFieldsTypeDescriptior, DataFieldDescriptor[] fields)
+        public uint GetCompleteClassTypeIndex(ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptor classFieldsTypeDescriptior, DataFieldDescriptor[] fields)
         {
             return GetCompleteClassTypeIndex(_nativeObjectWriter, classTypeDescriptor, classFieldsTypeDescriptior, fields);
-        }
-
-        public uint GetVariableTypeIndex(TypeDesc type, bool needsCompleteIndex)
-        {
-            uint typeIndex = 0;
-            if (type.IsPrimitive)
-            {
-                typeIndex = PrimitiveTypeDescriptor.GetPrimitiveTypeIndex(type);
-            }
-            else
-            {
-                typeIndex = _userDefinedTypeDescriptor.GetTypeIndex(type, needsCompleteIndex);
-            }
-            return typeIndex;
         }
 
         [DllImport(NativeObjectWriterFileName)]
@@ -295,7 +281,7 @@ namespace ILCompiler.DependencyAnalysis
         public void EmitDebugVar(DebugVarInfo debugVar)
         {
             int rangeCount = debugVar.Ranges.Count;
-            uint typeIndex = GetVariableTypeIndex(debugVar.Type, true);
+            uint typeIndex = _userDefinedTypeDescriptor.GetVariableTypeIndex(debugVar.Type, true);
             EmitDebugVar(_nativeObjectWriter, debugVar.Name, typeIndex, debugVar.IsParam, rangeCount, debugVar.Ranges.ToArray());
         }
 
@@ -510,7 +496,7 @@ namespace ILCompiler.DependencyAnalysis
                 ObjectNodeSection lsdaSection = LsdaSection;
                 if (ShouldShareSymbol(node))
                 {
-                    lsdaSection = lsdaSection.GetSharedSection(((ISymbolNode)node).GetMangledName(_nodeFactory.NameMangler));
+                    lsdaSection = GetSharedSection(lsdaSection, ((ISymbolNode)node).GetMangledName(_nodeFactory.NameMangler));
                 }
                 SwitchSection(_nativeObjectWriter, lsdaSection.Name, GetCustomSectionAttributes(lsdaSection), lsdaSection.ComdatName);
 
@@ -803,6 +789,15 @@ namespace ILCompiler.DependencyAnalysis
             return true;
         }
 
+        private ObjectNodeSection GetSharedSection(ObjectNodeSection section, string key)
+        {
+            string standardSectionPrefix = "";
+            if (section.IsStandardSection)
+                standardSectionPrefix = ".";
+
+            return new ObjectNodeSection(standardSectionPrefix + section.Name, section.Type, key);
+        }
+
         public static void EmitObject(string objectFilePath, IEnumerable<DependencyNode> nodes, NodeFactory factory, IObjectDumper dumper)
         {
             ObjectWriter objectWriter = new ObjectWriter(objectFilePath, factory);
@@ -818,13 +813,13 @@ namespace ILCompiler.DependencyAnalysis
                     // Emit sentinels for managed code section.
                     ObjectNodeSection codeStartSection = factory.CompilationModuleGroup.IsSingleFileCompilation ?
                                                             MethodCodeNode.StartSection :
-                                                            MethodCodeNode.StartSection.GetSharedSection("__managedcode_a");
+                                                            objectWriter.GetSharedSection(MethodCodeNode.StartSection, "__managedcode_a");
                     objectWriter.SetSection(codeStartSection);
                     objectWriter.EmitSymbolDef(new Utf8StringBuilder().Append("__managedcode_a"));
                     objectWriter.EmitIntValue(0, 1);
                     ObjectNodeSection codeEndSection = factory.CompilationModuleGroup.IsSingleFileCompilation ?
                                                             MethodCodeNode.EndSection :
-                                                            MethodCodeNode.EndSection.GetSharedSection("__managedcode_z");
+                                                            objectWriter.GetSharedSection(MethodCodeNode.EndSection, "__managedcode_z");
                     objectWriter.SetSection(codeEndSection);
                     objectWriter.EmitSymbolDef(new Utf8StringBuilder().Append("__managedcode_z"));
                     objectWriter.EmitIntValue(1, 1);
@@ -875,7 +870,7 @@ namespace ILCompiler.DependencyAnalysis
                     ObjectNodeSection section = node.Section;
                     if (objectWriter.ShouldShareSymbol(node))
                     {
-                        section = section.GetSharedSection(((ISymbolNode)node).GetMangledName(factory.NameMangler));
+                        section = objectWriter.GetSharedSection(section, ((ISymbolNode)node).GetMangledName(factory.NameMangler));
                     }
 
                     // Ensure section and alignment for the node.

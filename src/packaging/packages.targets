@@ -26,7 +26,7 @@
             <CoreFxNuPkgRid Condition="'$(OSGroup)'=='OSX'">osx-x64</CoreFxNuPkgRid>
             <CoreFxNuPkgRid Condition="'$(CoreFxNuPkgRid)'==''">$(NuPkgRid)</CoreFxNuPkgRid>
 
-            <JitPackageVersion>2.0.0-preview2-25226-01</JitPackageVersion>
+            <JitPackageVersion>2.0.0-preview2-25311-01</JitPackageVersion>
             <JitNuPkgRid Condition="'$(OSGroup)'=='OSX'">osx.10.12-x64</JitNuPkgRid>
             <JitNuPkgRid Condition="'$(JitNuPkgRid)'==''">$(NuPkgRid)</JitNuPkgRid>
 
@@ -40,6 +40,7 @@
             <!-- IL.Compiler target files -->
             <ILCompilerFiles Include="ilc.dll" />
             <ILCompilerFiles Include="ILCompiler.Compiler.dll" />
+            <ILCompilerFiles Include="ILCompiler.CppCodeGen.dll" />
             <ILCompilerFiles Include="ILCompiler.DependencyAnalysisFramework.dll" />
             <ILCompilerFiles Include="ILCompiler.MetadataTransform.dll" />
             <ILCompilerFiles Include="ILCompiler.MetadataWriter.dll" />

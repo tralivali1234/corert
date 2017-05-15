@@ -37,7 +37,7 @@ namespace ILCompiler
         private bool HasImport { get; set; }
         private bool HasExport { get; set; }
 
-        public UTCNameMangler(bool hasImport, bool hasExport, ImportExportOrdinals ordinals)
+        public UTCNameMangler(bool hasImport, bool hasExport, ImportExportOrdinals ordinals) : base(new WindowsNodeMangler())
         {
             // Do not support both imports and exports for one module
             Debug.Assert(!hasImport || !hasExport);
@@ -101,7 +101,7 @@ namespace ILCompiler
         //
         // Turn a name into a valid C/C++ identifier
         //
-        internal override string SanitizeName(string s, bool typeName = false)
+        public override string SanitizeName(string s, bool typeName = false)
         {
             StringBuilder sb = null;
             for (int i = 0; i < s.Length; i++)
@@ -152,6 +152,19 @@ namespace ILCompiler
             return sanitizedName;
         }
 
+        private static byte[] GetBytesFromString(string literal)
+        {
+            byte[] bytes = new byte[checked(literal.Length * 2)];
+            for (int i = 0; i < literal.Length; i++)
+            {
+                int iByteBase = i * 2;
+                char c = literal[i];
+                bytes[iByteBase] = (byte)c;
+                bytes[iByteBase + 1] = (byte)(c >> 8);
+            }
+            return bytes;
+        }
+
         private string SanitizeNameWithHash(string literal)
         {
             string mangledName = SanitizeName(literal);
@@ -162,9 +175,15 @@ namespace ILCompiler
             if (mangledName != literal)
             {
                 if (_sha256 == null)
+                {
+                    // Use SHA256 hash here to provide a high degree of uniqueness to symbol names without requiring them to be long
+                    // This hash function provides an exceedingly high likelihood that no two strings will be given equal symbol names
+                    // This is not considered used for security purpose; however collisions would be highly unfortunate as they will cause compilation
+                    // failure.
                     _sha256 = SHA256.Create();
+                }
 
-                var hash = _sha256.ComputeHash(Encoding.UTF8.GetBytes(literal));
+                var hash = _sha256.ComputeHash(GetBytesFromString(literal));
                 mangledName += "_" + BitConverter.ToString(hash).Replace("-", "");
             }
 

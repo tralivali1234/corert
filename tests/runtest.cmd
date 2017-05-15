@@ -127,17 +127,11 @@ if /i "%__BuildType%"=="Debug" (
 
 echo. > %__CoreRTTestBinDir%\testResults.tmp
 
-rem Hacky filtering to prevent shared generics and unshared generics from mixing
-set __Filter=
-if /i "%CoreRT_MultiFileConfiguration%" == "MultiModule" (
-    set __Filter=^^^| findstr /V Generics
-)
-
 set /a __CppTotalTests=0
 set /a __CppPassedTests=0
 set /a __JitTotalTests=0
 set /a __JitPassedTests=0
-for /f "delims=" %%a in ('cmd /c dir /s /aD /b %CoreRT_TestRoot%\src\%CoreRT_TestName% %__Filter%') do (
+for /f "delims=" %%a in ('dir /s /aD /b %CoreRT_TestRoot%\src\%CoreRT_TestName%') do (
     set __SourceFolder=%%a
     set __SourceFileName=%%~na
     set __RelativePath=!__SourceFolder:%CoreRT_TestRoot%=!
@@ -281,7 +275,7 @@ goto :eof
     if exist "%CoreRT_TestExtRepo%" rmdir /S /Q "%CoreRT_TestExtRepo%"
     mkdir "%CoreRT_TestExtRepo%"
 
-    set /p TESTS_REMOTE_URL=< "%~dp0..\CoreCLRTestsURL.txt"
+    set /p TESTS_REMOTE_URL=< "%~dp0\CoreCLRTestsURL.txt"
     set TESTS_LOCAL_ZIP=%CoreRT_TestExtRepo%\tests.zip
     set INIT_TESTS_LOG=%~dp0..\init-tests.log
     echo Restoring tests (this may take a few minutes)..

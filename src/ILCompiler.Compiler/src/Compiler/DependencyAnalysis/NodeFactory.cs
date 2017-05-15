@@ -34,10 +34,7 @@ namespace ILCompiler.DependencyAnalysis
             NameMangler = nameMangler;
             InteropStubManager = new InteropStubManager(compilationModuleGroup, context, new InteropStateManager(compilationModuleGroup.GeneratedAssembly));
             CreateNodeCaches();
-
             MetadataManager = metadataManager;
-            ThreadStaticsRegion = new ThreadStaticsRegionNode(
-                "__ThreadStaticRegionStart", "__ThreadStaticRegionEnd", null, _target.Abi);
         }
 
         public void SetMarkingComplete()
@@ -84,6 +81,13 @@ namespace ILCompiler.DependencyAnalysis
         public InteropStubManager InteropStubManager
         {
             get;
+        }
+
+        // Temporary workaround that is used to disable certain features from lighting up
+        // in CppCodegen because they're not fully implemented yet.
+        public virtual bool IsCppCodegenTemporaryWorkaround
+        {
+            get { return false; }
         }
 
         /// <summary>
@@ -148,15 +152,7 @@ namespace ILCompiler.DependencyAnalysis
                     }
                     else if (type.IsCanonicalSubtype(CanonicalFormKind.Any))
                     {
-                        if (Target.Abi == TargetAbi.CoreRT)
-                        {
-                            return new CanonicalEETypeNode(this, type);
-                        }
-                        else
-                        {
-                            // Remove this once we stop using the STS dependency analysis.
-                            return new NecessaryCanonicalEETypeNode(this, type);
-                        }
+                        return new NecessaryCanonicalEETypeNode(this, type);
                     }
                     else
                     {
@@ -244,10 +240,7 @@ namespace ILCompiler.DependencyAnalysis
                 return GCStaticsRegion.NewNode((GCStaticsNode)gcStaticsNode);
             });
 
-            _threadStatics = new NodeCache<MetadataType, ThreadStaticsNode>((MetadataType type) =>
-            {
-                return new ThreadStaticsNode(type, this);
-            });
+            _threadStatics = new NodeCache<MetadataType, ISymbolDefinitionNode>(CreateThreadStaticsNode);
 
             _typeThreadStaticIndices = new NodeCache<MetadataType, TypeThreadStaticIndexNode>(type =>
             {
@@ -296,6 +289,11 @@ namespace ILCompiler.DependencyAnalysis
             _gvmTableEntries = new NodeCache<TypeDesc, TypeGVMEntriesNode>(type =>
             {
                 return new TypeGVMEntriesNode(type);
+            });
+
+            _reflectableMethods = new NodeCache<MethodDesc, ReflectableMethodNode>(method =>
+            {
+                return new ReflectableMethodNode(method);
             });
 
             _shadowConcreteMethods = new NodeCache<MethodKey, IMethodNode>(methodKey =>
@@ -441,6 +439,11 @@ namespace ILCompiler.DependencyAnalysis
 
         protected abstract ISymbolNode CreateReadyToRunHelperNode(ReadyToRunHelperKey helperCall);
 
+        protected virtual ISymbolDefinitionNode CreateThreadStaticsNode(MetadataType type)
+        {
+            return new ThreadStaticsNode(type, this);
+        }
+
         private NodeCache<TypeDesc, IEETypeNode> _typeSymbols;
 
         public IEETypeNode NecessaryTypeSymbol(TypeDesc type)
@@ -513,9 +516,9 @@ namespace ILCompiler.DependencyAnalysis
             return _GCStaticIndirectionNodes.GetOrAdd(type);
         }
 
-        private NodeCache<MetadataType, ThreadStaticsNode> _threadStatics;
+        private NodeCache<MetadataType, ISymbolDefinitionNode> _threadStatics;
 
-        public ThreadStaticsNode TypeThreadStaticsSymbol(MetadataType type)
+        public ISymbolDefinitionNode TypeThreadStaticsSymbol(MetadataType type)
         {
             // This node is always used in the context of its index within the region.
             // We should never ask for this if the current compilation doesn't contain the
@@ -617,7 +620,7 @@ namespace ILCompiler.DependencyAnalysis
 
         private NodeCache<TypeDesc, VTableSliceNode> _vTableNodes;
 
-        internal VTableSliceNode VTable(TypeDesc type)
+        public VTableSliceNode VTable(TypeDesc type)
         {
             return _vTableNodes.GetOrAdd(type);
         }
@@ -641,7 +644,7 @@ namespace ILCompiler.DependencyAnalysis
         }
 
         private NodeCache<MethodDesc, IMethodNode> _stringAllocators;
-        internal IMethodNode StringAllocator(MethodDesc stringConstructor)
+        public IMethodNode StringAllocator(MethodDesc stringConstructor)
         {
             return _stringAllocators.GetOrAdd(stringConstructor);
         }
@@ -666,6 +669,24 @@ namespace ILCompiler.DependencyAnalysis
             return _fatFunctionPointers.GetOrAdd(new MethodKey(method, isUnboxingStub));
         }
 
+        public IMethodNode ExactCallableAddress(MethodDesc method, bool isUnboxingStub = false)
+        {
+            MethodDesc canonMethod = method.GetCanonMethodTarget(CanonicalFormKind.Specific);
+            if (method != canonMethod)
+                return FatFunctionPointer(method, isUnboxingStub);
+            else
+                return MethodEntrypoint(method, isUnboxingStub);
+        }
+
+        public IMethodNode CanonicalEntrypoint(MethodDesc method, bool isUnboxingStub = false)
+        {
+            MethodDesc canonMethod = method.GetCanonMethodTarget(CanonicalFormKind.Specific);
+            if (method != canonMethod)
+                return ShadowConcreteMethod(method, isUnboxingStub);
+            else
+                return MethodEntrypoint(method, isUnboxingStub);
+        }
+
         private NodeCache<MethodDesc, GVMDependenciesNode> _gvmDependenciesNode;
         internal GVMDependenciesNode GVMDependencies(MethodDesc method)
         {
@@ -676,6 +697,12 @@ namespace ILCompiler.DependencyAnalysis
         internal TypeGVMEntriesNode TypeGVMEntries(TypeDesc type)
         {
             return _gvmTableEntries.GetOrAdd(type);
+        }
+
+        private NodeCache<MethodDesc, ReflectableMethodNode> _reflectableMethods;
+        internal ReflectableMethodNode ReflectableMethod(MethodDesc method)
+        {
+            return _reflectableMethods.GetOrAdd(method);
         }
 
         private NodeCache<MethodKey, IMethodNode> _shadowConcreteMethods;
@@ -847,7 +874,10 @@ namespace ILCompiler.DependencyAnalysis
             "__GCStaticRegionEnd", 
             null);
 
-        public ThreadStaticsRegionNode ThreadStaticsRegion;
+        public ArrayOfEmbeddedDataNode ThreadStaticsRegion = new ArrayOfEmbeddedDataNode(
+            "__ThreadStaticRegionStart",
+            "__ThreadStaticRegionEnd",
+            null);
 
         public ArrayOfEmbeddedPointersNode<IMethodNode> EagerCctorTable = new ArrayOfEmbeddedPointersNode<IMethodNode>(
             "__EagerCctorStart",

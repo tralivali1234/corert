@@ -774,7 +774,7 @@ namespace System.Runtime.InteropServices
             {
                 len = (uint)src.Length;
 
-                dst = (System.IntPtr*)ExternalInterop.CoTaskMemAlloc((System.IntPtr)(len * (sizeof(System.IntPtr))));
+                dst = (System.IntPtr*)PInvokeMarshal.CoTaskMemAlloc((System.UIntPtr)(len * (sizeof(System.IntPtr))));
 
                 for (uint i = 0; i < len; i++)
                 {
@@ -1144,7 +1144,7 @@ namespace System.Runtime.InteropServices
                 else if(McgModuleManager.UseDynamicInterop)
                 {
                     BoxingInterfaceKind boxingInterfaceKind;
-                    RuntimeTypeHandle genericTypeArgument;
+                    RuntimeTypeHandle[] genericTypeArgument;
                     if (DynamicInteropBoxingHelpers.TryGetBoxingArgumentTypeHandleFromString(className, out boxingInterfaceKind, out genericTypeArgument))
                     {
                         Debug.Assert(target is __ComObject);
