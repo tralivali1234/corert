@@ -3,7 +3,6 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
@@ -62,7 +61,6 @@ namespace System.Globalization
     // Gregorian to Hebrew Lunar from 1583 to 2239.
 
 
-    [Serializable]
     public class HebrewCalendar : Calendar
     {
         public static readonly int HebrewEra = 1;
@@ -346,14 +344,14 @@ namespace System.Globalization
         **  We use a table for the Hebrew calendar calculation, so the year supported is limited.
         ============================================================================*/
 
-        private static void CheckHebrewYearValue(int y, int era, String varName)
+        private static void CheckHebrewYearValue(int y, int era, string varName)
         {
             CheckEraRange(era);
             if (y > MaxHebrewYear || y < MinHebrewYear)
             {
                 throw new ArgumentOutOfRangeException(
                             varName,
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_Range,
                                 MinHebrewYear,
@@ -378,7 +376,7 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                             nameof(month),
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_Range,
                                 1,
@@ -404,7 +402,7 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                             nameof(day),
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_Range,
                                 1,
@@ -427,7 +425,7 @@ namespace System.Globalization
                 throw new ArgumentOutOfRangeException(
                             "time",
                             // Print out the date in Gregorian using InvariantCulture since the DateTime is based on GreograinCalendar.
-                            String.Format(
+                            string.Format(
                                 CultureInfo.InvariantCulture,
                                 SR.ArgumentOutOfRange_CalendarRange,
                                 calendarMinValue,
@@ -537,9 +535,7 @@ namespace System.Globalization
             //
             //  Save the Gregorian date values.
             //
-            gregorianYear = time.Year;
-            gregorianMonth = time.Month;
-            gregorianDay = time.Day;
+            time.GetDatePart(out gregorianYear, out gregorianMonth, out gregorianDay);
 
             __DateBuffer lunarDate = new __DateBuffer();    // lunar month and day for Jan 1
 
@@ -712,7 +708,7 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                             nameof(months),
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_AddValue));
             }
@@ -1098,7 +1094,6 @@ namespace System.Globalization
                 throw new ArgumentOutOfRangeException(nameof(year),
                     SR.ArgumentOutOfRange_NeedNonNegNum);
             }
-            Contract.EndContractBlock();
 
             if (year < 100)
             {
@@ -1109,7 +1104,7 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                             nameof(year),
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_Range,
                                 MinHebrewYear,

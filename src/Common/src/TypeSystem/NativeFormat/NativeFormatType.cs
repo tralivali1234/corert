@@ -68,7 +68,7 @@ namespace Internal.TypeSystem.NativeFormat
 
 #if DEBUG
             // Initialize name eagerly in debug builds for convenience
-            this.ToString();
+            InitializeName();
 #endif
         }
 
@@ -279,6 +279,22 @@ namespace Internal.TypeSystem.NativeFormat
                 }
             }
 
+            if ((mask & TypeFlags.HasFinalizerComputed) != 0)
+            {
+                flags |= TypeFlags.HasFinalizerComputed;
+
+                if (GetFinalizer() != null)
+                    flags |= TypeFlags.HasFinalizer;
+            }
+
+            if ((mask & TypeFlags.AttributeCacheComputed) != 0)
+            {
+                flags |= TypeFlags.AttributeCacheComputed;
+
+                if (IsValueType && HasCustomAttribute("System.Runtime.CompilerServices", "IsByRefLikeAttribute"))
+                    flags |= TypeFlags.IsByRefLike;
+            }
+
             return flags;
         }
 
@@ -439,7 +455,7 @@ namespace Internal.TypeSystem.NativeFormat
                 if (impl == null)
                 {
                     // TODO: invalid input: the type doesn't derive from our System.Object
-                    throw new TypeLoadException(this.GetFullName());
+                    ThrowHelper.ThrowTypeLoadException(this);
                 }
 
                 if (impl.OwningType != objectType)
@@ -450,8 +466,8 @@ namespace Internal.TypeSystem.NativeFormat
                 return null;
             }
 
-            // TODO: Better exception type. Should be: "CoreLib doesn't have a required thing in it".
-            throw new NotImplementedException();
+            ThrowHelper.ThrowTypeLoadException(objectType);
+            return null;
         }
 
         public override IEnumerable<FieldDesc> GetFields()
@@ -524,11 +540,6 @@ namespace Internal.TypeSystem.NativeFormat
         {
             return MetadataReader.HasCustomAttribute(_typeDefinition.CustomAttributes,
                 attributeNamespace, attributeName);
-        }
-
-        public override string ToString()
-        {
-            return "[" + NativeFormatModule.GetName().Name + "]" + this.GetFullName();
         }
 
         public override ClassLayoutMetadata GetClassLayout()

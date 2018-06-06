@@ -14,7 +14,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 
@@ -246,11 +245,11 @@ namespace System.Threading.Tasks
             }
 
             /// <summary>
-            /// Checks if we registered a CT callback during construction, and deregisters it. 
+            /// Checks if we registered a CT callback during construction, and unregisters it.
             /// This should be called when we know the registration isn't useful anymore. Specifically from Finish() if the task has completed
             /// successfully or with an exception.
             /// </summary>
-            internal void DeregisterCancellationCallback()
+            internal void UnregisterCancellationCallback()
             {
                 if (m_cancellationRegistration != null)
                 {
@@ -334,7 +333,6 @@ namespace System.Threading.Tasks
         public Task(Action action)
             : this(action, null, null, default(CancellationToken), TaskCreationOptions.None, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -350,7 +348,6 @@ namespace System.Threading.Tasks
         public Task(Action action, CancellationToken cancellationToken)
             : this(action, null, null, cancellationToken, TaskCreationOptions.None, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -371,7 +368,6 @@ namespace System.Threading.Tasks
         public Task(Action action, TaskCreationOptions creationOptions)
             : this(action, null, Task.InternalCurrentIfAttached(creationOptions), default(CancellationToken), creationOptions, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -396,7 +392,6 @@ namespace System.Threading.Tasks
         public Task(Action action, CancellationToken cancellationToken, TaskCreationOptions creationOptions)
             : this(action, null, Task.InternalCurrentIfAttached(creationOptions), cancellationToken, creationOptions, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
 
@@ -411,7 +406,6 @@ namespace System.Threading.Tasks
         public Task(Action<object> action, object state)
             : this(action, state, null, default(CancellationToken), TaskCreationOptions.None, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -429,7 +423,6 @@ namespace System.Threading.Tasks
         public Task(Action<object> action, object state, CancellationToken cancellationToken)
             : this(action, state, null, cancellationToken, TaskCreationOptions.None, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -451,7 +444,6 @@ namespace System.Threading.Tasks
         public Task(Action<object> action, object state, TaskCreationOptions creationOptions)
             : this(action, state, Task.InternalCurrentIfAttached(creationOptions), default(CancellationToken), creationOptions, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
         /// <summary>
@@ -477,19 +469,11 @@ namespace System.Threading.Tasks
         public Task(Action<object> action, object state, CancellationToken cancellationToken, TaskCreationOptions creationOptions)
             : this(action, state, Task.InternalCurrentIfAttached(creationOptions), cancellationToken, creationOptions, InternalTaskOptions.None, null)
         {
-            PossiblyCaptureContext();
         }
 
-        internal Task(Action<object> action, object state, Task parent, CancellationToken cancellationToken,
-            TaskCreationOptions creationOptions, InternalTaskOptions internalOptions, TaskScheduler scheduler)
-            : this((Delegate)action, state, parent, cancellationToken, creationOptions, internalOptions, scheduler)
-        {
-            PossiblyCaptureContext();
-        }
 
         /// <summary>
         /// An internal constructor used by the factory methods on task and its descendent(s).
-        /// This variant does not capture the ExecutionContext; it is up to the caller to do that.
         /// </summary>
         /// <param name="action">An action to execute.</param>
         /// <param name="state">Optional state to pass to the action.</param>
@@ -505,7 +489,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(action));
             }
-            Contract.EndContractBlock();
 
             // This is readonly, and so must be set in the constructor
             // Keep a link to your parent if you are attached.
@@ -592,6 +575,11 @@ namespace System.Threading.Tasks
 
                 AssignCancellationToken(cancellationToken, null, null);
             }
+
+            Debug.Assert(m_contingentProperties == null || m_contingentProperties.m_capturedContext == null,
+                "Captured an ExecutionContext when one was already captured.");
+
+            CapturedContext = ExecutionContext.Capture();
         }
 
         /// <summary>
@@ -782,19 +770,6 @@ namespace System.Threading.Tasks
                 return "0x" + fptr.ToString("x");
                 //return d != null ? d.Method.ToString() : "{null}";
             }
-        }
-
-        /// <summary>
-        /// Captures the ExecutionContext so long as flow isn't suppressed.
-        /// </summary>
-        /// <param name="stackMark">A stack crawl mark pointing to the frame of the caller.</param>
-
-        internal void PossiblyCaptureContext()
-        {
-            Debug.Assert(m_contingentProperties == null || m_contingentProperties.m_capturedContext == null,
-                "Captured an ExecutionContext when one was already captured.");
-
-            CapturedContext = ExecutionContext.Capture();
         }
 
         // Internal property to process TaskCreationOptions access and mutation.
@@ -1152,7 +1127,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             InternalRunSynchronously(scheduler, waitForCompletion: true);
         }
@@ -1272,12 +1246,10 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             // Create and schedule the task. This throws an InvalidOperationException if already shut down.
             // Here we add the InternalTaskOptions.QueuedByRuntime to the internalOptions, so that TaskConstructorCore can skip the cancellation token registration
             Task t = new Task(action, state, creatingTask, cancellationToken, options, internalOptions | InternalTaskOptions.QueuedByRuntime, scheduler);
-            t.PossiblyCaptureContext();
 
             t.ScheduleAndStart(false);
             return t;
@@ -2216,7 +2188,7 @@ namespace System.Threading.Tasks
             if (cp != null)
             {
                 cp.SetCompleted();
-                cp.DeregisterCancellationCallback();
+                cp.UnregisterCancellationCallback();
             }
 
             // ready to run continuations and notify parent.
@@ -2352,7 +2324,6 @@ namespace System.Threading.Tasks
                 HandleException(exn);
             }
         }
-
 
         /// <summary>
         /// IThreadPoolWorkItem override, which is the entry function for this task when the TP scheduler decides to run it.
@@ -2509,7 +2480,7 @@ namespace System.Threading.Tasks
                 actionWithState(m_stateObject);
                 return;
             }
-            Debug.Assert(false, "Invalid m_action in Task");
+            Debug.Fail("Invalid m_action in Task");
         }
 
         /// <summary>
@@ -2759,7 +2730,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentOutOfRangeException(nameof(millisecondsTimeout));
             }
-            Contract.EndContractBlock();
 
             // Return immediately if we know that we've completed "clean" -- no exceptions, no cancellations
             // and if no notification to the debugger is required
@@ -2820,7 +2790,7 @@ namespace System.Threading.Tasks
         }
 
         /// <summary>
-        /// The core wait function, which is only accesible internally. It's meant to be used in places in TPL code where 
+        /// The core wait function, which is only accessible internally. It's meant to be used in places in TPL code where 
         /// the current context is known or cached.
         /// </summary>
         [MethodImpl(MethodImplOptions.NoOptimization)]  // this is needed for the parallel debugger
@@ -3146,7 +3116,7 @@ namespace System.Threading.Tasks
             if (cp != null)
             {
                 cp.SetCompleted();
-                cp.DeregisterCancellationCallback();
+                cp.UnregisterCancellationCallback();
             }
 
             if (DebuggerSupport.LoggingOn)
@@ -3481,7 +3451,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             TaskCreationOptions creationOptions;
             InternalTaskOptions internalOptions;
@@ -3671,7 +3640,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             TaskCreationOptions creationOptions;
             InternalTaskOptions internalOptions;
@@ -3875,7 +3843,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             TaskCreationOptions creationOptions;
             InternalTaskOptions internalOptions;
@@ -4083,7 +4050,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentNullException(nameof(scheduler));
             }
-            Contract.EndContractBlock();
 
             TaskCreationOptions creationOptions;
             InternalTaskOptions internalOptions;
@@ -4567,7 +4533,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentOutOfRangeException(nameof(millisecondsTimeout));
             }
-            Contract.EndContractBlock();
 
             cancellationToken.ThrowIfCancellationRequested(); // early check before we make any allocations
 
@@ -4940,7 +4905,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentOutOfRangeException(nameof(millisecondsTimeout));
             }
-            Contract.EndContractBlock();
 
             cancellationToken.ThrowIfCancellationRequested(); // early check before we make any allocations
 
@@ -5014,7 +4978,6 @@ namespace System.Threading.Tasks
         public static Task<TResult> FromException<TResult>(Exception exception)
         {
             if (exception == null) throw new ArgumentNullException(nameof(exception));
-            Contract.EndContractBlock();
 
             var task = new Task<TResult>();
             bool succeeded = task.TrySetException(exception);
@@ -5029,7 +4992,6 @@ namespace System.Threading.Tasks
         internal static Task FromCancellation(CancellationToken cancellationToken)
         {
             if (!cancellationToken.IsCancellationRequested) throw new ArgumentOutOfRangeException(nameof(cancellationToken));
-            Contract.EndContractBlock();
             return new Task(true, TaskCreationOptions.None, cancellationToken);
         }
 
@@ -5049,7 +5011,6 @@ namespace System.Threading.Tasks
         internal static Task<TResult> FromCancellation<TResult>(CancellationToken cancellationToken)
         {
             if (!cancellationToken.IsCancellationRequested) throw new ArgumentOutOfRangeException(nameof(cancellationToken));
-            Contract.EndContractBlock();
             return new Task<TResult>(true, default(TResult), TaskCreationOptions.None, cancellationToken);
         }
 
@@ -5069,7 +5030,6 @@ namespace System.Threading.Tasks
         internal static Task<TResult> FromCancellation<TResult>(OperationCanceledException exception)
         {
             if (exception == null) throw new ArgumentNullException(nameof(exception));
-            Contract.EndContractBlock();
 
             var task = new Task<TResult>();
             bool succeeded = task.TrySetCanceled(exception.CancellationToken, exception);
@@ -5177,7 +5137,6 @@ namespace System.Threading.Tasks
         {
             // Check arguments
             if (function == null) throw new ArgumentNullException(nameof(function));
-            Contract.EndContractBlock();
 
             // Short-circuit if we are given a pre-canceled token
             if (cancellationToken.IsCancellationRequested)
@@ -5226,7 +5185,6 @@ namespace System.Threading.Tasks
         {
             // Check arguments
             if (function == null) throw new ArgumentNullException(nameof(function));
-            Contract.EndContractBlock();
 
             // Short-circuit if we are given a pre-canceled token
             if (cancellationToken.IsCancellationRequested)
@@ -5331,7 +5289,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentOutOfRangeException(nameof(millisecondsDelay), SR.Task_Delay_InvalidMillisecondsDelay);
             }
-            Contract.EndContractBlock();
 
             // some short-cuts in case quick completion is in order
             if (cancellationToken.IsCancellationRequested)
@@ -5504,7 +5461,6 @@ namespace System.Threading.Tasks
         {
             // Do some argument checking and make a defensive copy of the tasks array
             if (tasks == null) throw new ArgumentNullException(nameof(tasks));
-            Contract.EndContractBlock();
 
             int taskCount = tasks.Length;
             if (taskCount == 0) return InternalWhenAll(tasks); // Small optimization in the case of an empty array.
@@ -5748,7 +5704,6 @@ namespace System.Threading.Tasks
         {
             // Do some argument checking and make a defensive copy of the tasks array
             if (tasks == null) throw new ArgumentNullException(nameof(tasks));
-            Contract.EndContractBlock();
 
             int taskCount = tasks.Length;
             if (taskCount == 0) return InternalWhenAll<TResult>(tasks); // small optimization in the case of an empty task array
@@ -5914,7 +5869,6 @@ namespace System.Threading.Tasks
             {
                 throw new ArgumentException(SR.Task_MultiTaskContinuation_EmptyTaskList, nameof(tasks));
             }
-            Contract.EndContractBlock();
 
             // Make a defensive copy, as the user may manipulate the tasks array
             // after we return but before the WhenAny asynchronously completes.
@@ -5949,7 +5903,6 @@ namespace System.Threading.Tasks
         public static Task<Task> WhenAny(IEnumerable<Task> tasks)
         {
             if (tasks == null) throw new ArgumentNullException(nameof(tasks));
-            Contract.EndContractBlock();
 
             // Make a defensive copy, as the user may manipulate the tasks collection
             // after we return but before the WhenAny asynchronously completes.
@@ -6479,7 +6432,7 @@ namespace System.Threading.Tasks
                     Debug.Assert(result, "Expected TrySetFromTask from inner task to succeed");
                     break;
                 default:
-                    Debug.Assert(false, "UnwrapPromise in illegal state");
+                    Debug.Fail("UnwrapPromise in illegal state");
                     break;
             }
         }

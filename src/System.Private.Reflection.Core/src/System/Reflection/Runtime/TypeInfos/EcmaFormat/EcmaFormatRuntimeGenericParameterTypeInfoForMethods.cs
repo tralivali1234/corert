@@ -23,8 +23,12 @@ namespace System.Reflection.Runtime.TypeInfos.EcmaFormat
         private EcmaFormatRuntimeGenericParameterTypeInfoForMethods(MetadataReader reader, GenericParameterHandle genericParameterHandle, RuntimeNamedMethodInfo declaringRuntimeNamedMethodInfo)
            : base(reader, genericParameterHandle, reader.GetGenericParameter(genericParameterHandle))
         {
+            Debug.Assert(declaringRuntimeNamedMethodInfo.DeclaringType.IsTypeDefinition);
             _declaringRuntimeNamedMethodInfo = declaringRuntimeNamedMethodInfo;
         }
+
+        public sealed override bool IsGenericTypeParameter => false;
+        public sealed override bool IsGenericMethodParameter => true;
 
         public sealed override MethodBase DeclaringMethod
         {

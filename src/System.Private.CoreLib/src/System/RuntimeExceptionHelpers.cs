@@ -24,6 +24,7 @@ namespace System
         }
     }
 
+    [ReflectionBlocked]
     public class RuntimeExceptionHelpers
     {
         //------------------------------------------------------------------------------------------------------------
@@ -200,7 +201,7 @@ namespace System
 
         internal static void FailFast(string message, Exception exception, RhFailFastReason reason, IntPtr pExAddress, IntPtr pExContext)
         {
-            // If this a recursive call to FailFast, avoid all unnecessary and complex actitivy the second time around to avoid the recursion 
+            // If this a recursive call to FailFast, avoid all unnecessary and complex activity the second time around to avoid the recursion 
             // that got us here the first time (Some judgement is required as to what activity is "unnecessary and complex".)
             bool minimalFailFast = InFailFast.Value || (exception is OutOfMemoryException);
             InFailFast.Value = true;
@@ -248,9 +249,9 @@ namespace System
 #pragma warning disable 414 // field is assigned, but never used -- This is because C# doesn't realize that we
         //                                      copy the field into a buffer.
         /// <summary>
-        /// This is the header that describes our 'error report' buffer to the minidump auxillary provider.
+        /// This is the header that describes our 'error report' buffer to the minidump auxiliary provider.
         /// Its format is know to that system-wide DLL, so do not change it.  The remainder of the buffer is
-        /// opaque to the minidump auxillary provider, so it'll have its own format that is more easily 
+        /// opaque to the minidump auxiliary provider, so it'll have its own format that is more easily 
         /// changed.
         /// </summary>
         [StructLayout(LayoutKind.Sequential)]
@@ -341,7 +342,7 @@ namespace System
                         pMetadata->NestingLevel = ExceptionMetadata.NestingLevel;
                         pMetadata->ExceptionCCWPtr = ExceptionMetadata.ExceptionCCWPtr;
 
-                        Array.CopyToNative(SerializedExceptionData, 0, (IntPtr)(pSerializedData + sizeof(ExceptionMetadataStruct)), SerializedExceptionData.Length);
+                        PInvokeMarshal.CopyToNative(SerializedExceptionData, 0, (IntPtr)(pSerializedData + sizeof(ExceptionMetadataStruct)), SerializedExceptionData.Length);
                     }
                     return serializedData;
                 }
@@ -361,7 +362,7 @@ namespace System
         /// <summary>
         /// This method will call the runtime to gather the Exception objects from every exception dispatch in
         /// progress on the current thread.  It will then serialize them into a new buffer and pass that 
-        /// buffer back to the runtime, which will publish it to a place where a global "minidump auxillary 
+        /// buffer back to the runtime, which will publish it to a place where a global "minidump auxiliary 
         /// provider" will be able to save the buffer's contents into triage dumps.
         /// 
         /// Thread safety information: The guarantee of this method is that the buffer it produces will have
@@ -405,8 +406,9 @@ namespace System
             uint currentThreadId = (uint)Environment.CurrentNativeThreadId;
 
             // Reset nesting levels for exceptions on this thread that might not be currently in flight
-            foreach (ExceptionData exceptionData in s_exceptionDataTable.GetValues())
+            foreach (KeyValuePair<Exception, ExceptionData> item in s_exceptionDataTable)
             {
+                ExceptionData exceptionData = item.Value;
                 if (exceptionData.ExceptionMetadata.ThreadId == currentThreadId)
                 {
                     exceptionData.ExceptionMetadata.NestingLevel = -1;
@@ -505,8 +507,10 @@ namespace System
 
             checked
             {
-                foreach (ExceptionData exceptionData in s_exceptionDataTable.GetValues())
+                foreach (KeyValuePair<Exception, ExceptionData> item in s_exceptionDataTable)
                 {
+                    ExceptionData exceptionData = item.Value;
+
                     // Already serialized currentException
                     if (currentExceptionData != null && exceptionData.ExceptionMetadata.ExceptionId == currentExceptionData.ExceptionMetadata.ExceptionId)
                     {
@@ -529,7 +533,7 @@ namespace System
         {
             checked
             {
-                int loadedModuleCount = RuntimeAugments.GetLoadedOSModules(null);
+                int loadedModuleCount = (int)RuntimeImports.RhGetLoadedOSModules(null);
                 int cbModuleHandles = sizeof(System.IntPtr) * loadedModuleCount;
                 int cbFinalBuffer = sizeof(ERROR_REPORT_BUFFER_HEADER) + sizeof(SERIALIZED_ERROR_REPORT_HEADER) + cbModuleHandles;
                 for (int i = 0; i < serializedExceptions.Count; i++)
@@ -557,15 +561,15 @@ namespace System
                     for (int i = 0; i < serializedExceptions.Count; i++)
                     {
                         int cbChunk = serializedExceptions[i].Length;
-                        Array.CopyToNative(serializedExceptions[i], 0, (IntPtr)pCursor, cbChunk);
+                        PInvokeMarshal.CopyToNative(serializedExceptions[i], 0, (IntPtr)pCursor, cbChunk);
                         cbRemaining -= cbChunk;
                         pCursor += cbChunk;
                     }
 
                     // copy the module-handle array to report buffer
                     IntPtr[] loadedModuleHandles = new IntPtr[loadedModuleCount];
-                    RuntimeAugments.GetLoadedOSModules(loadedModuleHandles);
-                    Array.CopyToNative(loadedModuleHandles, 0, (IntPtr)pCursor, loadedModuleHandles.Length);
+                    RuntimeImports.RhGetLoadedOSModules(loadedModuleHandles);
+                    PInvokeMarshal.CopyToNative(loadedModuleHandles, 0, (IntPtr)pCursor, loadedModuleHandles.Length);
                     cbRemaining -= cbModuleHandles;
                     pCursor += cbModuleHandles;
 

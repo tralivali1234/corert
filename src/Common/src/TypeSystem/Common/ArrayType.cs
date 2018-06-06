@@ -143,12 +143,11 @@ namespace Internal.TypeSystem
 
             flags |= TypeFlags.HasGenericVarianceComputed;
 
-            return flags;
-        }
+            flags |= TypeFlags.HasFinalizerComputed;
 
-        public override string ToString()
-        {
-            return this.ElementType.ToString() + "[" + new String(',', Rank - 1) + "]";
+            flags |= TypeFlags.AttributeCacheComputed;
+
+            return flags;
         }
     }
 
@@ -321,11 +320,6 @@ namespace Internal.TypeSystem
                 return ((ArrayType)instantiatedOwningType).GetArrayMethod(_kind);
             else
                 return this;
-        }
-
-        public override string ToString()
-        {
-            return _owningType.ToString() + "." + Name;
         }
     }
 }

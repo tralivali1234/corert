@@ -24,8 +24,11 @@ using System.Globalization;
 
 using RhCorElementType = System.Runtime.RuntimeImports.RhCorElementType;
 
+using EnumInfo = Internal.Runtime.Augments.EnumInfo;
+
 namespace Internal.Reflection.Augments
 {
+    [System.Runtime.CompilerServices.ReflectionBlocked]
     public static class ReflectionAugments
     {
         //
@@ -93,6 +96,16 @@ namespace Internal.Reflection.Augments
             return TypeCode.Object;
         }
 
+        public static Type MakeGenericSignatureType(Type genericTypeDefinition, Type[] genericTypeArguments)
+        {
+            return new SignatureConstructedGenericType(genericTypeDefinition, genericTypeArguments);
+        }
+
+        public static TypeLoadException CreateTypeLoadException(string message, string typeName)
+        {
+            return new TypeLoadException(message, typeName);
+        }
+
         internal static ReflectionCoreCallbacks ReflectionCoreCallbacks
         {
             get
@@ -111,9 +124,10 @@ namespace Internal.Reflection.Augments
     // This class is implemented by Internal.Reflection.Core.dll and provides the actual implementation
     // of Type.GetTypeInfo() and (on Project N) (Assembly.Load()).
     //
+    [System.Runtime.CompilerServices.ReflectionBlocked]
     public abstract class ReflectionCoreCallbacks
     {
-        public abstract Assembly Load(AssemblyName refName);
+        public abstract Assembly Load(AssemblyName refName, bool throwOnFileNotFound);
         public abstract Assembly Load(byte[] rawAssembly, byte[] pdbSymbolStore);
 
         public abstract MethodBase GetMethodFromHandle(RuntimeMethodHandle runtimeMethodHandle);
@@ -149,5 +163,7 @@ namespace Internal.Reflection.Augments
         public abstract void MakeTypedReference(object target, FieldInfo[] flds, out Type type, out int offset);
 
         public abstract Assembly[] GetLoadedAssemblies();
+
+        public abstract EnumInfo GetEnumInfo(Type type);
     }
 }

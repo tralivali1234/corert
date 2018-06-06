@@ -6,7 +6,6 @@ set(NATIVE_SOURCES
     pal_dynamicload.cpp
     pal_environment.cpp
     pal_errno.cpp
-    pal_guid.cpp
     pal_memory.cpp
     pal_exepath.cpp
     pal_threading.cpp
@@ -24,4 +23,4 @@ endif ()
 
 include(configure.cmake)
 
-install (TARGETS System.Private.CoreLib.Native DESTINATION lib)
+install (TARGETS System.Private.CoreLib.Native DESTINATION sdk)

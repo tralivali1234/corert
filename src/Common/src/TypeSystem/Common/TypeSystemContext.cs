@@ -57,9 +57,16 @@ namespace Internal.TypeSystem
             SystemModule = systemModule;
         }
 
-        public abstract DefType GetWellKnownType(WellKnownType wellKnownType);
+        public abstract DefType GetWellKnownType(WellKnownType wellKnownType, bool throwIfNotFound = true);
 
         public virtual ModuleDesc ResolveAssembly(AssemblyName name, bool throwIfNotFound = true)
+        {
+            if (throwIfNotFound)
+                throw new NotSupportedException();
+            return null;
+        }
+
+        internal virtual ModuleDesc ResolveModule(ModuleDesc referencingModule, string fileName, bool throwIfNotFound = true)
         {
             if (throwIfNotFound)
                 throw new NotSupportedException();

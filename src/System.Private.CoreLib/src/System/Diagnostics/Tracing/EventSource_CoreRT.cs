@@ -178,6 +178,7 @@ namespace System.Diagnostics.Tracing
                 this.Tags = tags;
                 this.EnabledForAnyListener = enabledForAnyListener;
                 this.EnabledForETW = enabledForETW;
+                this.EnabledForEventPipe = false;
                 this.TriggersActivityTracking = 0;
                 this.Name = name;
                 this.Message = message;
@@ -186,6 +187,7 @@ namespace System.Diagnostics.Tracing
                 this.ActivityOptions = EventActivityOptions.None;
                 this.ParameterTypes = parameterTypes;
                 this.HasRelatedActivityID = false;
+                this.EventHandle = IntPtr.Zero;
             }
         }
         

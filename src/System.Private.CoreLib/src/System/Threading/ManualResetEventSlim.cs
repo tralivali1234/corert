@@ -15,7 +15,6 @@
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Diagnostics.Contracts;
 using Internal.Runtime.Augments;
 
 namespace System.Threading
@@ -247,9 +246,6 @@ namespace System.Threading
         /// </summary>
         private void EnsureLockObjectCreated()
         {
-            Contract.Ensures(m_lock != null);
-            Contract.Ensures(m_condition != null);
-
             if (m_lock == null)
             {
                 Lock newObj = new Lock();
@@ -615,7 +611,7 @@ namespace System.Threading
                 // Now enter the lock and wait.
                 EnsureLockObjectCreated();
 
-                // We must register and deregister the token outside of the lock, to avoid deadlocks.
+                // We must register and unregister the token outside of the lock, to avoid deadlocks.
                 using (cancellationToken.InternalRegisterWithoutEC(s_cancellationTokenCallback, this))
                 {
                     using (LockHolder.Hold(m_lock))
@@ -669,7 +665,7 @@ namespace System.Threading
                         }
                     }
                 }
-            } // automatically disposes (and deregisters) the callback 
+            } // automatically disposes (and unregisters) the callback
 
             return true; //done. The wait was satisfied.
         }

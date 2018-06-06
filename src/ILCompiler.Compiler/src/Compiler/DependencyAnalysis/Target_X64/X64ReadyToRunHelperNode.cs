@@ -31,27 +31,24 @@ namespace ILCompiler.DependencyAnalysis
                     {
                         MethodDesc targetMethod = (MethodDesc)Target;
 
-                        if (targetMethod.OwningType.IsInterface)
+                        Debug.Assert(!targetMethod.OwningType.IsInterface);
+                        Debug.Assert(!targetMethod.CanMethodBeInSealedVTable());
+
+                        AddrMode loadFromThisPtr = new AddrMode(encoder.TargetRegister.Arg0, null, 0, 0, AddrModeSize.Int64);
+                        encoder.EmitMOV(encoder.TargetRegister.Result, ref loadFromThisPtr);
+
+                        int pointerSize = factory.Target.PointerSize;
+
+                        int slot = 0;
+                        if (!relocsOnly)
                         {
-                            encoder.EmitLEAQ(Register.R10, factory.InterfaceDispatchCell((MethodDesc)Target));
-                            AddrMode jmpAddrMode = new AddrMode(Register.R10, null, 0, 0, AddrModeSize.Int64);
-                            encoder.EmitJmpToAddrMode(ref jmpAddrMode);
-                        }
-                        else
-                        {
-                            if (relocsOnly)
-                                break;
-
-                            AddrMode loadFromThisPtr = new AddrMode(encoder.TargetRegister.Arg0, null, 0, 0, AddrModeSize.Int64);
-                            encoder.EmitMOV(encoder.TargetRegister.Result, ref loadFromThisPtr);
-
-                            int pointerSize = factory.Target.PointerSize;
-
-                            int slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, targetMethod);
+                            slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, targetMethod, targetMethod.OwningType);
                             Debug.Assert(slot != -1);
-                            AddrMode jmpAddrMode = new AddrMode(encoder.TargetRegister.Result, null, EETypeNode.GetVTableOffset(pointerSize) + (slot * pointerSize), 0, AddrModeSize.Int64);
-                            encoder.EmitJmpToAddrMode(ref jmpAddrMode);
                         }
+                        Debug.Assert(((INodeWithDebugInfo)this).DebugLocInfos[1].NativeOffset == encoder.Builder.CountBytes);
+
+                        AddrMode jmpAddrMode = new AddrMode(encoder.TargetRegister.Result, null, EETypeNode.GetVTableOffset(pointerSize) + (slot * pointerSize), 0, AddrModeSize.Int64);
+                        encoder.EmitJmpToAddrMode(ref jmpAddrMode);
                     }
                     break;
 
@@ -171,12 +168,14 @@ namespace ILCompiler.DependencyAnalysis
 
                         if (target.TargetNeedsVTableLookup)
                         {
+                            Debug.Assert(!target.TargetMethod.CanMethodBeInSealedVTable());
+
                             AddrMode loadFromThisPtr = new AddrMode(encoder.TargetRegister.Arg1, null, 0, 0, AddrModeSize.Int64);
                             encoder.EmitMOV(encoder.TargetRegister.Arg2, ref loadFromThisPtr);
 
                             int slot = 0;
                             if (!relocsOnly)
-                                slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, target.TargetMethod);
+                                slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, target.TargetMethod, target.TargetMethod.OwningType);
 
                             Debug.Assert(slot != -1);
                             AddrMode loadFromSlot = new AddrMode(encoder.TargetRegister.Arg2, null, EETypeNode.GetVTableOffset(factory.Target.PointerSize) + (slot * factory.Target.PointerSize), 0, AddrModeSize.Int64);
@@ -218,7 +217,9 @@ namespace ILCompiler.DependencyAnalysis
                             AddrMode loadFromThisPtr = new AddrMode(encoder.TargetRegister.Arg0, null, 0, 0, AddrModeSize.Int64);
                             encoder.EmitMOV(encoder.TargetRegister.Result, ref loadFromThisPtr);
 
-                            int slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, targetMethod);
+                            Debug.Assert(!targetMethod.CanMethodBeInSealedVTable());
+
+                            int slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, targetMethod, targetMethod.OwningType);
                             Debug.Assert(slot != -1);
                             AddrMode loadFromSlot = new AddrMode(encoder.TargetRegister.Result, null, EETypeNode.GetVTableOffset(factory.Target.PointerSize) + (slot * factory.Target.PointerSize), 0, AddrModeSize.Int64);
                             encoder.EmitMOV(encoder.TargetRegister.Result, ref loadFromSlot);

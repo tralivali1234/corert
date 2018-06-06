@@ -51,7 +51,7 @@ namespace ILCompiler.DependencyAnalysis
         public IEnumerable<DependencyListEntry> InstantiateDependencies(NodeFactory factory, Instantiation typeInstantiation, Instantiation methodInstantiation)
         {
             yield return new DependencyListEntry(
-                factory.ShadowConcreteMethod(Method.InstantiateSignature(typeInstantiation, methodInstantiation)), "concrete method");
+                factory.ShadowConcreteMethod(Method.GetNonRuntimeDeterminedMethodFromRuntimeDeterminedMethodViaSubstitution(typeInstantiation, methodInstantiation)), "concrete method");
         }
 
         public override bool HasConditionalStaticDependencies => false;
@@ -61,5 +61,12 @@ namespace ILCompiler.DependencyAnalysis
 
         public override IEnumerable<CombinedDependencyListEntry> SearchDynamicDependencies(List<DependencyNodeCore<NodeFactory>> markedNodes, int firstNode, NodeFactory factory) => null;
         public override IEnumerable<CombinedDependencyListEntry> GetConditionalStaticDependencies(NodeFactory factory) => null;
+
+        int ISortableSymbolNode.ClassCode => 258139501;
+
+        int ISortableSymbolNode.CompareToImpl(ISortableSymbolNode other, CompilerComparer comparer)
+        {
+            return comparer.Compare(_canonicalMethodNode, ((RuntimeDeterminedMethodNode)other)._canonicalMethodNode);
+        }
     }
 }

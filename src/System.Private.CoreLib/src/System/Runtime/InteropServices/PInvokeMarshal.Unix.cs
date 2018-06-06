@@ -18,9 +18,14 @@ namespace System.Runtime.InteropServices
             s_lastWin32Error = Interop.Sys.GetErrNo();
         }
 
-        internal static void ClearLastWin32Error()
+        public static void ClearLastWin32Error()
         {
             Interop.Sys.ClearErrNo();
+        }
+
+        private static bool IsWin32Atom(IntPtr ptr)
+        {
+            return false;
         }
 
         public static unsafe String PtrToStringAnsi(IntPtr ptr)
@@ -35,6 +40,16 @@ namespace System.Runtime.InteropServices
             {
                 return string.Empty;
             }
+
+            return System.Text.Encoding.UTF8.GetString((byte*)ptr, len);
+        }
+
+        public static unsafe String PtrToStringAnsi(IntPtr ptr, int len)
+        {
+            if (ptr == IntPtr.Zero)
+                throw new ArgumentNullException(nameof(ptr));
+            if (len < 0)
+                throw new ArgumentException(nameof(len));
 
             return System.Text.Encoding.UTF8.GetString((byte*)ptr, len);
         }
@@ -90,7 +105,6 @@ namespace System.Runtime.InteropServices
         }
 
         #region String marshalling
-        private const uint WC_NO_BEST_FIT_CHARS = 0;
 
         public static unsafe int ConvertMultiByteToWideChar(byte* multiByteStr,
                                                             int multiByteLen,
@@ -104,8 +118,8 @@ namespace System.Runtime.InteropServices
                                                             int wideCharLen,
                                                             byte* multiByteStr,
                                                             int multiByteLen,
-                                                            uint flags,
-                                                            IntPtr usedDefaultChar)
+                                                            bool bestFit,
+                                                            bool throwOnUnmappableChar)
         {
             return System.Text.Encoding.UTF8.GetBytes(wideCharStr, wideCharLen, multiByteStr, multiByteLen);
         }

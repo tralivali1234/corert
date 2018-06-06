@@ -18,14 +18,14 @@ namespace System.Reflection.Runtime.MethodInfos
     //
     // The runtime's implementation of constructors exposed on array types.
     //
-    internal sealed partial class RuntimeSyntheticConstructorInfo : RuntimeConstructorInfo
+    internal sealed partial class RuntimeSyntheticConstructorInfo : RuntimeConstructorInfo, IRuntimeMemberInfoWithNoMetadataDefinition
     {
-        private RuntimeSyntheticConstructorInfo(SyntheticMethodId syntheticMethodId, RuntimeTypeInfo declaringType, RuntimeTypeInfo[] runtimeParameterTypes, InvokerOptions options, Func<Object, Object[], Object> invoker)
+        private RuntimeSyntheticConstructorInfo(SyntheticMethodId syntheticMethodId, RuntimeArrayTypeInfo declaringType, RuntimeTypeInfo[] runtimeParameterTypes, InvokerOptions options, CustomMethodInvokerAction action)
         {
             _syntheticMethodId = syntheticMethodId;
             _declaringType = declaringType;
             _options = options;
-            _invoker = invoker;
+            _action = action;
             _runtimeParameterTypes = runtimeParameterTypes;
         }
 
@@ -104,10 +104,18 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other));
+
+            // This logic is written to match CoreCLR's behavior.
+            return other is ConstructorInfo && other is IRuntimeMemberInfoWithNoMetadataDefinition;
+        }
+
         public sealed override bool Equals(object obj)
         {
-            RuntimeSyntheticConstructorInfo other = obj as RuntimeSyntheticConstructorInfo;
-            if (other == null)
+            if (!(obj is RuntimeSyntheticConstructorInfo other))
                 return false;
             if (_syntheticMethodId != other._syntheticMethodId)
                 return false;
@@ -155,28 +163,14 @@ namespace System.Reflection.Runtime.MethodInfos
             }
         }
 
-        protected sealed override MethodInvoker UncachedMethodInvoker
-        {
-            get
-            {
-                RuntimeTypeInfo[] runtimeParameterTypes = _runtimeParameterTypes;
-                RuntimeTypeHandle[] runtimeParameterTypeHandles = new RuntimeTypeHandle[runtimeParameterTypes.Length];
-                for (int i = 0; i < runtimeParameterTypes.Length; i++)
-                    runtimeParameterTypeHandles[i] = runtimeParameterTypes[i].TypeHandle;
-                return ReflectionCoreExecution.ExecutionEnvironment.GetSyntheticMethodInvoker(
-                    _declaringType.TypeHandle,
-                    runtimeParameterTypeHandles,
-                    _options,
-                    _invoker);
-            }
-        }
+        protected sealed override MethodInvoker UncachedMethodInvoker => new CustomMethodInvoker(_declaringType, _runtimeParameterTypes, _options, _action);
 
         private volatile RuntimeParameterInfo[] _lazyParameters;
 
         private readonly SyntheticMethodId _syntheticMethodId;
-        private readonly RuntimeTypeInfo _declaringType;
+        private readonly RuntimeArrayTypeInfo _declaringType;
         private readonly RuntimeTypeInfo[] _runtimeParameterTypes;
         private readonly InvokerOptions _options;
-        private readonly Func<Object, Object[], Object> _invoker;
+        private readonly CustomMethodInvokerAction _action;
     }
 }

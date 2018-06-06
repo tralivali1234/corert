@@ -68,9 +68,9 @@ namespace System.Reflection.Runtime.Assemblies.EcmaFormat
 
             public override bool Equals(Object obj)
             {
-                if (!(obj is EcmaRuntimeAssemblyKey))
+                if (!(obj is EcmaRuntimeAssemblyKey other))
                     return false;
-                return Equals((EcmaRuntimeAssemblyKey)obj);
+                return Equals(other);
             }
 
 
@@ -100,6 +100,21 @@ namespace System.Reflection.Runtime.FieldInfos.EcmaFormat
         internal static RuntimeFieldInfo GetRuntimeFieldInfo(FieldDefinitionHandle fieldHandle, EcmaFormatRuntimeNamedTypeInfo definingTypeInfo, RuntimeTypeInfo contextTypeInfo, RuntimeTypeInfo reflectedType)
         {
             return new EcmaFormatRuntimeFieldInfo(fieldHandle, definingTypeInfo, contextTypeInfo, reflectedType).WithDebugName();
+        }
+    }
+}
+
+namespace System.Reflection.Runtime.Modules.EcmaFormat
+{
+    //-----------------------------------------------------------------------------------------------------------
+    // Modules (these exist only because Modules still exist in the Win8P surface area. There is a 1-1
+    //          mapping between Assemblies and Modules.)
+    //-----------------------------------------------------------------------------------------------------------
+    internal sealed partial class EcmaFormatRuntimeModule
+    {
+        internal static RuntimeModule GetRuntimeModule(EcmaFormatRuntimeAssembly assembly)
+        {
+            return new EcmaFormatRuntimeModule(assembly);
         }
     }
 }
@@ -137,7 +152,7 @@ namespace System.Reflection.Runtime.ParameterInfos.EcmaFormat
     //-----------------------------------------------------------------------------------------------------------
     // ParameterInfos for MethodBase objects with Parameter metadata.
     //-----------------------------------------------------------------------------------------------------------
-    internal sealed partial class EcmaFormatMethodParameterInfo : RuntimeMethodParameterInfo
+    internal sealed partial class EcmaFormatMethodParameterInfo
     {
         internal static EcmaFormatMethodParameterInfo GetEcmaFormatMethodParameterInfo(MethodBase member, MethodDefinitionHandle methodHandle, int position, ParameterHandle parameterHandle, QSignatureTypeHandle qualifiedParameterType, TypeContext typeContext)
         {

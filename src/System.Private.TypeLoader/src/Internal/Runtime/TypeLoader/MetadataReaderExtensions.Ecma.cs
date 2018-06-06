@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 
 using Internal.LowLevelLinq;
 using Internal.Reflection.Core;
@@ -79,18 +80,30 @@ namespace System.Reflection.Runtime.General
             int contentType = ((int)assemblyFlags) & 0x00000E00;
             assemblyNameFlags |= (AssemblyNameFlags)contentType;
 
-            byte[] publicKeyOrTokenByteArray = null;
+            byte[] publicKeyOrTokenByteArray;
             if (!publicKeyOrToken.IsNil)
             {
                 ImmutableArray<byte> publicKeyOrTokenBlob = reader.GetBlobContent(publicKeyOrToken);
                 publicKeyOrTokenByteArray = new byte[publicKeyOrTokenBlob.Length];
                 publicKeyOrTokenBlob.CopyTo(publicKeyOrTokenByteArray);
             }
+            else
+            {
+                publicKeyOrTokenByteArray = Array.Empty<byte>();
+            }
             
+            string cultureName = culture.GetString(reader);
+            if (!String.IsNullOrEmpty(cultureName))
+            {
+                // Canonicalize spelling and force a CultureNotFoundException if not a valid culture
+                CultureInfo cultureInfo = CultureInfo.GetCultureInfo(cultureName);
+                cultureName = cultureInfo.Name;
+            }
+
             return new RuntimeAssemblyName(
                 name.GetString(reader),
                 version,
-                culture.GetString(reader),
+                cultureName,
                 assemblyNameFlags,
                 publicKeyOrTokenByteArray
                 );

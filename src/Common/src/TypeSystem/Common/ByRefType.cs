@@ -35,12 +35,11 @@ namespace Internal.TypeSystem
 
             flags |= TypeFlags.HasGenericVarianceComputed;
 
-            return flags;
-        }
+            flags |= TypeFlags.HasFinalizerComputed;
 
-        public override string ToString()
-        {
-            return this.ParameterType.ToString() + "&";
+            flags |= TypeFlags.AttributeCacheComputed;
+
+            return flags;
         }
     }
 }

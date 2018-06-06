@@ -110,6 +110,9 @@ namespace ILCompiler.DependencyAnalysis
             if (!IsMethodEligibleForTracking(method))
                 return;
 
+            if (!factory.MetadataManager.SupportsReflection)
+                return;
+
             dependencies = dependencies ?? new DependencyList();
 
             // Method entry point dependency
@@ -147,5 +150,8 @@ namespace ILCompiler.DependencyAnalysis
 
             return true;
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.ExactMethodInstantiationsNode;
     }
 }

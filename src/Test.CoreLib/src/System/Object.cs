@@ -17,8 +17,11 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+using Internal.Runtime.CompilerServices;
+
 // TODO: remove when m_pEEType becomes EETypePtr
 using EEType = Internal.Runtime.EEType;
+using ObjHeader = Internal.Runtime.ObjHeader;
 
 namespace System
 {
@@ -88,6 +91,15 @@ namespace System
         internal ref byte GetRawData()
         {
             return ref Unsafe.As<RawData>(this).Data;
+        }
+
+        /// <summary>
+        /// Return size of all data (excluding ObjHeader and EEType*).
+        /// Note that for strings/arrays this would include the Length as well.
+        /// </summary>
+        internal unsafe uint GetRawDataSize()
+        {
+            return EEType->BaseSize - (uint)sizeof(ObjHeader) - (uint)sizeof(EEType*);
         }
     }
 }

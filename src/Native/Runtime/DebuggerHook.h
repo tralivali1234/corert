@@ -14,21 +14,38 @@
 #include "CommonMacros.h"
 #endif
 #include "daccess.h"
+#include "Debug.h"
 
 #ifndef DACCESS_COMPILE
 
-struct DebuggerProtectedBufferList
+struct DebuggerProtectedBufferListNode
 {
     UInt64 address;
     UInt16 size;
-    struct DebuggerProtectedBufferList* next;
+    UInt32 identifier;
+    struct DebuggerProtectedBufferListNode* next;
+};
+
+struct DebuggerOwnedHandleListNode
+{
+    void* handle;
+    UInt32 identifier;
+    struct DebuggerOwnedHandleListNode* next;
 };
 
 class DebuggerHook
 {
 public:
     static void OnBeforeGcCollection();
-    static DebuggerProtectedBufferList* s_debuggerProtectedBuffers;
+    static UInt32 RecordDebuggeeInitiatedHandle(void* handle);
+    static DebuggerProtectedBufferListNode* s_debuggerProtectedBuffers;
+    static DebuggerOwnedHandleListNode* s_debuggerOwnedHandles;
+private:
+    static void EnsureConservativeReporting(DebuggerGcProtectionRequest* request);
+    static void RemoveConservativeReporting(DebuggerGcProtectionRequest* request);
+    static void EnsureHandle(DebuggerGcProtectionRequest* request);
+    static void RemoveHandle(DebuggerGcProtectionRequest* request);
+    static UInt32 s_debuggeeInitiatedHandleIdentifier;
 };
 
 #endif //!DACCESS_COMPILE

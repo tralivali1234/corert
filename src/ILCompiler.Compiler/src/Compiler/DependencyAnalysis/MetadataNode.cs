@@ -5,6 +5,7 @@
 using System;
 
 using Internal.Text;
+using Internal.TypeSystem;
 
 namespace ILCompiler.DependencyAnalysis
 {
@@ -55,5 +56,8 @@ namespace ILCompiler.DependencyAnalysis
                     _endSymbol
                 });
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.MetadataNode;
     }
 }

@@ -28,29 +28,6 @@
 #include "rhbinder.h"
 #include "eetype.h"
 
-// Find the code manager containing the given address, which might be a return address from a managed function. The
-// address may be to another managed function, or it may be to an unmanaged function. The address may also refer to 
-// an EEType.
-static ICodeManager * FindCodeManagerForClasslibFunction(void * address)
-{
-    RuntimeInstance * pRI = GetRuntimeInstance();
-
-    // Try looking up the code manager assuming the address is for code first. This is expected to be most common.
-    ICodeManager * pCodeManager = pRI->FindCodeManagerByAddress(address);
-    if (pCodeManager != NULL)
-        return pCodeManager;
-
-    // Less common, we will look for the address in any of the sections of the module.  This is slower, but is 
-    // necessary for EEType pointers and jump stubs.
-    Module * pModule = pRI->FindModuleByAddress(address);
-    if (pModule != NULL)
-        return pModule;
-
-    ASSERT_MSG(!Thread::IsHijackTarget(address), "not expected to be called with hijacked return address");
-
-    return NULL;
-}
-
 COOP_PINVOKE_HELPER(Boolean, RhpEHEnumInitFromStackFrameIterator, (
     StackFrameIterator* pFrameIter, void ** pMethodStartAddressOut, EHEnum* pEHEnum))
 {
@@ -70,33 +47,19 @@ COOP_PINVOKE_HELPER(Boolean, RhpEHEnumNext, (EHEnum* pEHEnum, EHClause* pEHClaus
 // found via the provided address does not have the necessary exports.
 COOP_PINVOKE_HELPER(void *, RhpGetClasslibFunctionFromCodeAddress, (void * address, ClasslibFunctionId functionId))
 {
-    // Find the code manager for the given address, which is an address into some managed module. It could
-    // be code, or it could be an EEType. No matter what, it's an address into a managed module in some non-Rtm
-    // type system.
-    ICodeManager * pCodeManager = FindCodeManagerForClasslibFunction(address);
-
-    // If the address isn't in a managed module then we have no classlib function.
-    if (pCodeManager == NULL)
-    {
-        return NULL;
-    }
-
-    return pCodeManager->GetClasslibFunction(functionId);
+    return GetRuntimeInstance()->GetClasslibFunctionFromCodeAddress(address, functionId);
 }
 
 // Unmanaged helper to locate one of two classlib-provided functions that the runtime needs to 
 // implement throwing of exceptions out of Rtm, and fail-fast. This may return NULL if the classlib
 // found via the provided address does not have the necessary exports.
-COOP_PINVOKE_HELPER(void *, RhpGetClasslibFunctionFromEEtype, (EEType * pEEtype, ClasslibFunctionId functionId))
+COOP_PINVOKE_HELPER(void *, RhpGetClasslibFunctionFromEEType, (EEType * pEEType, ClasslibFunctionId functionId))
 {
-    if (pEEtype->HasTypeManager())
-    {
-        return pEEtype->GetTypeManagerPtr()->AsTypeManager()->GetClasslibFunction(functionId);
-    }
-    else
+#ifdef PROJECTN
+    if (!pEEType->HasTypeManager())
     {
         RuntimeInstance * pRI = GetRuntimeInstance();
-        Module * pModule = pRI->FindModuleByAddress(pEEtype);
+        Module * pModule = pRI->FindModuleByAddress(pEEType);
         if (pModule != NULL)
         {
             return pModule->GetClasslibFunction(functionId);
@@ -106,6 +69,9 @@ COOP_PINVOKE_HELPER(void *, RhpGetClasslibFunctionFromEEtype, (EEType * pEEtype,
             return NULL;
         }
     }
+#endif // PROJECTN
+
+    return pEEType->GetTypeManagerPtr()->AsTypeManager()->GetClasslibFunction(functionId);
 }
 
 COOP_PINVOKE_HELPER(void, RhpValidateExInfoStack, ())
@@ -139,8 +105,7 @@ COOP_PINVOKE_HELPER(Int32, RhGetModuleFileName, (HANDLE moduleHandle, _Out_ cons
     return PalGetModuleFileName(pModuleNameOut, moduleHandle);
 }
 
-COOP_PINVOKE_HELPER(void, RhpCopyContextFromExInfo, 
-                                (void * pOSContext, Int32 cbOSContext, PAL_LIMITED_CONTEXT * pPalContext))
+COOP_PINVOKE_HELPER(void, RhpCopyContextFromExInfo, (void * pOSContext, Int32 cbOSContext, PAL_LIMITED_CONTEXT * pPalContext))
 {
     UNREFERENCED_PARAMETER(cbOSContext);
     ASSERT(cbOSContext >= sizeof(CONTEXT));
@@ -190,14 +155,31 @@ COOP_PINVOKE_HELPER(void, RhpCopyContextFromExInfo,
     pContext->Lr  = pPalContext->LR;
     pContext->Pc  = pPalContext->IP;
 #elif defined(_ARM64_)
-    PORTABILITY_ASSERT("@TODO: FIXME:ARM64");
+    pContext->X0 = pPalContext->X0;
+    pContext->X1 = pPalContext->X1;
+    // TODO: Copy registers X2-X7 when we start supporting HVA's
+    pContext->X19 = pPalContext->X19;
+    pContext->X20 = pPalContext->X20;
+    pContext->X21 = pPalContext->X21;
+    pContext->X22 = pPalContext->X22;
+    pContext->X23 = pPalContext->X23;
+    pContext->X24 = pPalContext->X24;
+    pContext->X25 = pPalContext->X25;
+    pContext->X26 = pPalContext->X26;
+    pContext->X27 = pPalContext->X27;
+    pContext->X28 = pPalContext->X28;
+    pContext->Fp = pPalContext->FP;
+    pContext->Sp = pPalContext->SP;
+    pContext->Lr = pPalContext->LR;
+    pContext->Pc = pPalContext->IP;
+#elif defined(_WASM_)
+    // No registers, no work to do yet
 #else
 #error Not Implemented for this architecture -- RhpCopyContextFromExInfo
 #endif
 }
 
-
-#if defined(_AMD64_) || defined(_ARM_) || defined(_X86_)
+#if defined(_AMD64_) || defined(_ARM_) || defined(_X86_) || defined(_ARM64_)
 struct DISPATCHER_CONTEXT
 {
     UIntNative  ControlPc;
@@ -219,9 +201,9 @@ EXTERN_C void REDHAWK_CALLCONV RhpFailFastForPInvokeExceptionCoop(IntNative PInv
 Int32 __stdcall RhpVectoredExceptionHandler(PEXCEPTION_POINTERS pExPtrs);
 
 EXTERN_C Int32 __stdcall RhpPInvokeExceptionGuard(PEXCEPTION_RECORD       pExceptionRecord,
-                                        UIntNative              EstablisherFrame,
-                                        PCONTEXT                pContextRecord,
-                                        DISPATCHER_CONTEXT *    pDispatcherContext)
+                                                  UIntNative              EstablisherFrame,
+                                                  PCONTEXT                pContextRecord,
+                                                  DISPATCHER_CONTEXT *    pDispatcherContext)
 {
     UNREFERENCED_PARAMETER(EstablisherFrame);
 #ifdef APP_LOCAL_RUNTIME
@@ -248,7 +230,6 @@ EXTERN_C Int32 __stdcall RhpPInvokeExceptionGuard(PEXCEPTION_RECORD       pExcep
     // managed code that calls to native code (without pinvoking) which might have a bug that causes an AV.  
     if (pThread->IsDoNotTriggerGcSet())
         RhFailFast();
-
 
     // We promote exceptions that were not converted to managed exceptions to a FailFast.  However, we have to
     // be careful because we got here via OS SEH infrastructure and, therefore, don't know what GC mode we're
@@ -284,7 +265,7 @@ EXTERN_C Int32 RhpPInvokeExceptionGuard()
 }
 #endif
 
-#if defined(_AMD64_) || defined(_ARM_) || defined(_X86_)
+#if defined(_AMD64_) || defined(_ARM_) || defined(_X86_) || defined(_ARM64_) || defined(_WASM_)
 EXTERN_C REDHAWK_API void __fastcall RhpThrowHwEx();
 #else
 COOP_PINVOKE_HELPER(void, RhpThrowHwEx, ())
@@ -344,10 +325,7 @@ static bool InWriteBarrierHelper(UIntNative faultingIP)
         (UIntNative)&RhpCheckedAssignRefAVLocation,
         (UIntNative)&RhpCheckedLockCmpXchgAVLocation,
         (UIntNative)&RhpCheckedXchgAVLocation,
-#ifdef CORERT
-        (UIntNative)&RhpLockCmpXchg32AVLocation,
-        (UIntNative)&RhpLockCmpXchg64AVLocation,
-#else
+#ifdef PROJECTN
         (UIntNative)&RhpCopyMultibyteDestAVLocation,
         (UIntNative)&RhpCopyMultibyteSrcAVLocation,
         (UIntNative)&RhpCopyMultibyteNoGCRefsDestAVLocation,
@@ -356,6 +334,9 @@ static bool InWriteBarrierHelper(UIntNative faultingIP)
         (UIntNative)&RhpCopyMultibyteWithWriteBarrierSrcAVLocation,
         (UIntNative)&RhpCopyAnyWithWriteBarrierDestAVLocation,
         (UIntNative)&RhpCopyAnyWithWriteBarrierSrcAVLocation,
+#else
+        (UIntNative)&RhpLockCmpXchg32AVLocation,
+        (UIntNative)&RhpLockCmpXchg64AVLocation,
 #endif
     };
 
@@ -375,8 +356,6 @@ static bool InWriteBarrierHelper(UIntNative faultingIP)
 
     return false;
 }
-
-
 
 static UIntNative UnwindWriteBarrierToCaller(
 #ifdef PLATFORM_UNIX
@@ -398,14 +377,16 @@ static UIntNative UnwindWriteBarrierToCaller(
 #elif defined(_ARM_) || defined(_ARM64_)
     UIntNative adjustedFaultingIP = pContext->GetLr();
 #else
-#error "Unknown Architecture"
+    UIntNative adjustedFaultingIP = 0; // initializing to make the compiler happy
+    PORTABILITY_ASSERT("UnwindWriteBarrierToCaller");
 #endif
     return adjustedFaultingIP;
 }
 
 #ifdef PLATFORM_UNIX
 
-Int32 __stdcall RhpHardwareExceptionHandler(UIntNative faultCode, UIntNative faultAddress, PAL_LIMITED_CONTEXT* palContext, UIntNative* arg0Reg, UIntNative* arg1Reg)
+Int32 __stdcall RhpHardwareExceptionHandler(UIntNative faultCode, UIntNative faultAddress,
+    PAL_LIMITED_CONTEXT* palContext, UIntNative* arg0Reg, UIntNative* arg1Reg)
 {
     UIntNative faultingIP = palContext->GetIp();
 
@@ -526,6 +507,5 @@ COOP_PINVOKE_HELPER(void, RhpFallbackFailFast, ())
 {
     RhFailFast();
 }
-
 
 #endif // !DACCESS_COMPILE

@@ -7,13 +7,33 @@ using System.Text;
 using System.Runtime;
 using System.Diagnostics;
 using System.Diagnostics.Contracts;
+using System.Reflection;
 
 using Internal.Runtime.Augments;
 
 namespace Internal.DeveloperExperience
 {
+    [System.Runtime.CompilerServices.ReflectionBlocked]
     public class DeveloperExperience
     {
+        /// <summary>
+        /// Check the AppCompat switch 'Diagnostics.DisableMetadataStackTraceResolution'.
+        /// Some customers use DIA-based tooling to translate stack traces in the raw format
+        /// (module)+RVA - for them, stack trace and reflection metadata-based resolution
+        /// constitutes technically a regression because these two resolution methods today cannot
+        /// provide file name and line number information; PDB-based tooling can easily do that
+        /// based on the RVA information.
+        ///
+        /// Note: a related switch 'Diagnostics.DisableDiaStackTraceResolution' controls whether
+        /// runtime may try to use DIA for PDB-based stack frame resolution.
+        /// </summary>
+        private static bool IsMetadataStackTraceResolutionDisabled()
+        {
+            bool disableMetadata = false;
+            AppContext.TryGetSwitch("Diagnostics.DisableMetadataStackTraceResolution", out disableMetadata);
+            return disableMetadata;
+        }
+
         public virtual void WriteLine(String s)
         {
             Debug.WriteLine(s);
@@ -22,29 +42,30 @@ namespace Internal.DeveloperExperience
 
         public virtual String CreateStackTraceString(IntPtr ip, bool includeFileInfo)
         {
-            ReflectionExecutionDomainCallbacks reflectionCallbacks = RuntimeAugments.CallbacksIfAvailable;
-            String moduleFullFileName = null;
-
-            if (reflectionCallbacks != null)
+            if (!IsMetadataStackTraceResolutionDisabled())
             {
-                IntPtr methodStart = RuntimeImports.RhFindMethodStartAddress(ip);
-                if (methodStart != IntPtr.Zero)
+                StackTraceMetadataCallbacks stackTraceCallbacks = RuntimeAugments.StackTraceCallbacksIfAvailable;
+                if (stackTraceCallbacks != null)
                 {
-                    string methodName = string.Empty;
-                    try
+                    IntPtr methodStart = RuntimeImports.RhFindMethodStartAddress(ip);
+                    if (methodStart != IntPtr.Zero)
                     {
-                        methodName = reflectionCallbacks.GetMethodNameFromStartAddressIfAvailable(methodStart);
+                        string methodName = stackTraceCallbacks.TryGetMethodNameFromStartAddress(methodStart);
+                        if (methodName != null)
+                        {
+                            if (ip != methodStart)
+                            {
+                                methodName += " + 0x" + (ip.ToInt64() - methodStart.ToInt64()).ToString("x");
+                            }
+                            return methodName;
+                        }
                     }
-                    catch { }
-
-                    if (!string.IsNullOrEmpty(methodName))
-                        return methodName;
                 }
-
-                // If we don't have precise information, try to map it at least back to the right module.
-                IntPtr moduleBase = RuntimeImports.RhGetOSModuleFromPointer(ip);
-                moduleFullFileName = RuntimeAugments.TryGetFullPathToApplicationModule(moduleBase);
             }
+
+            // If we don't have precise information, try to map it at least back to the right module.
+            IntPtr moduleBase = RuntimeImports.RhGetOSModuleFromPointer(ip);
+            string moduleFullFileName = RuntimeAugments.TryGetFullPathToApplicationModule(moduleBase);
 
             // Without any callbacks or the ability to map ip correctly we better admit that we don't know
             if (string.IsNullOrEmpty(moduleFullFileName))
@@ -66,6 +87,24 @@ namespace Internal.DeveloperExperience
             fileName = null;
             lineNumber = 0;
             columnNumber = 0;
+        }
+
+        public virtual void TryGetILOffsetWithinMethod(IntPtr ip, out int ilOffset)
+        {
+            ilOffset = StackFrame.OFFSET_UNKNOWN;
+        }
+
+        /// <summary>
+        /// Makes reasonable effort to get the MethodBase reflection info. Returns null if it can't.
+        /// </summary>
+        public virtual void TryGetMethodBase(IntPtr methodStartAddress, out MethodBase method)
+        {
+            ReflectionExecutionDomainCallbacks reflectionCallbacks = RuntimeAugments.CallbacksIfAvailable;
+            method = null;
+            if (reflectionCallbacks != null)
+            {
+                method = reflectionCallbacks.GetMethodBaseFromStartAddressIfAvailable(methodStartAddress);
+            }
         }
 
         public virtual bool OnContractFailure(String stackTrace, ContractFailureKind contractFailureKind, String displayMessage, String userMessage, String conditionText, Exception innerException)

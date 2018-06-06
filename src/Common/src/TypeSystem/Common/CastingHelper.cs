@@ -78,6 +78,14 @@ namespace Internal.TypeSystem
             // Casting array to something else (between SzArray and Array, for example)?
             if (thisType.Category != otherType.Category)
             {
+                // An SzArray is castable to MdArray rank 1. We follow the same casting rules as SzArray to SzArray.
+                if (thisType.Category == TypeFlags.SzArray
+                    && otherType.Category == TypeFlags.Array
+                    && ((ArrayType)otherType).Rank == 1)
+                {
+                    return thisType.CanCastParamTo(((ArrayType)otherType).ParameterType, protect);
+                }
+
                 return false;
             }
 
@@ -308,6 +316,11 @@ namespace Internal.TypeSystem
         private static bool CanCastToClass(this TypeDesc thisType, TypeDesc otherType, StackOverflowProtect protect)
         {
             TypeDesc curType = thisType;
+
+            if (curType.IsInterface && otherType.IsObject)
+            {
+                return true;
+            }
 
             // If the target type has variant type parameters, we take a slower path
             if (curType.HasVariance)

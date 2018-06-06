@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 namespace System
 {
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
     public class NotFiniteNumberException : ArithmeticException
     {
         private double _offendingNumber;
@@ -15,41 +16,41 @@ namespace System
             : base(SR.Arg_NotFiniteNumberException)
         {
             _offendingNumber = 0;
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
         public NotFiniteNumberException(double offendingNumber)
             : base()
         {
             _offendingNumber = offendingNumber;
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
-        public NotFiniteNumberException(String message)
+        public NotFiniteNumberException(string message)
             : base(message)
         {
             _offendingNumber = 0;
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
-        public NotFiniteNumberException(String message, double offendingNumber)
+        public NotFiniteNumberException(string message, double offendingNumber)
             : base(message)
         {
             _offendingNumber = offendingNumber;
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
-        public NotFiniteNumberException(String message, Exception innerException)
+        public NotFiniteNumberException(string message, Exception innerException)
             : base(message, innerException)
         {
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
-        public NotFiniteNumberException(String message, double offendingNumber, Exception innerException)
+        public NotFiniteNumberException(string message, double offendingNumber, Exception innerException)
             : base(message, innerException)
         {
             _offendingNumber = offendingNumber;
-            HResult = __HResults.COR_E_NOTFINITENUMBER;
+            HResult = HResults.COR_E_NOTFINITENUMBER;
         }
 
         protected NotFiniteNumberException(SerializationInfo info, StreamingContext context) : base(info, context)
@@ -60,7 +61,7 @@ namespace System
         public override void GetObjectData(SerializationInfo info, StreamingContext context)
         {
             base.GetObjectData(info, context);
-            info.AddValue("OffendingNumber", _offendingNumber, typeof(Int32));
+            info.AddValue("OffendingNumber", _offendingNumber, typeof(int));
         }
 
         public double OffendingNumber

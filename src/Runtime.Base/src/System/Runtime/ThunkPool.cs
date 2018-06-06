@@ -81,16 +81,16 @@ namespace System.Runtime
         private static IntPtr ClearThumbBit(IntPtr value)
         {
 #if ARM
-            Debug.Assert(((nuint)value & 1) == 1);
-            value = (IntPtr)((nuint)value - 1);
+            Debug.Assert(((nint)value & 1) == 1);
+            value = (IntPtr)((nint)value - 1);
 #endif
             return value;
         }
         private static IntPtr SetThumbBit(IntPtr value)
         {
 #if ARM
-            Debug.Assert(((nuint)value & 1) == 0);
-            value = (IntPtr)((nuint)value + 1);
+            Debug.Assert(((nint)value & 1) == 0);
+            value = (IntPtr)((nint)value + 1);
 #endif
             return value;
         }
@@ -135,7 +135,7 @@ namespace System.Runtime
                 if (newHeap._nextAvailableThunkPtr != IntPtr.Zero)
                     return newHeap;
             }
-            catch { }
+            catch (Exception) { }
 
             return null;
         }
@@ -156,7 +156,7 @@ namespace System.Runtime
             {
                 newBlockInfo = new AllocatedBlock();
             }
-            catch
+            catch (Exception)
             {
                 return false;
             }
@@ -296,7 +296,7 @@ namespace System.Runtime
             int thunkIndex = (int)((thunkAddressValue - currentThunksBlockAddress) / (nuint)Constants.ThunkCodeSize);
 
             // Compute the address of the data block that corresponds to the current thunk
-            IntPtr thunkDataBlockAddress = InternalCalls.RhpGetThunkDataBlockAddress((IntPtr)thunkAddressValue);
+            IntPtr thunkDataBlockAddress = InternalCalls.RhpGetThunkDataBlockAddress((IntPtr)((nint)thunkAddressValue));
 
             return thunkDataBlockAddress + thunkIndex * Constants.ThunkDataSize;
         }

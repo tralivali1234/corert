@@ -4,7 +4,7 @@
 
 using System.Collections;
 using System.Collections.Generic;
-using System.Diagnostics.Contracts;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using HashHelpers = System.Numerics.Hashing.HashHelpers;
@@ -29,6 +29,7 @@ namespace System
     /// - their members (such as Item1, Item2, etc) are fields rather than properties.
     /// </summary>
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple
         : IEquatable<ValueTuple>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple>, IValueTupleInternal, ITuple
     {
@@ -298,6 +299,7 @@ namespace System
     /// <summary>Represents a 1-tuple, or singleton, as a value type.</summary>
     /// <typeparam name="T1">The type of the tuple's only component.</typeparam>
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1>
         : IEquatable<ValueTuple<T1>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1>>, IValueTupleInternal, ITuple
     {
@@ -464,6 +466,7 @@ namespace System
     /// <typeparam name="T2">The type of the tuple's second component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2>
         : IEquatable<ValueTuple<T1, T2>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2>>, IValueTupleInternal, ITuple
     {
@@ -629,7 +632,7 @@ namespace System
         /// The string returned by this method takes the form <c>(Item1, Item2)</c>,
         /// where <c>Item1</c> and <c>Item2</c> represent the values of the <see cref="Item1"/>
         /// and <see cref="Item2"/> fields. If either field value is <see langword="null"/>,
-        /// it is represented as <see cref="String.Empty"/>.
+        /// it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -674,6 +677,7 @@ namespace System
     /// <typeparam name="T3">The type of the tuple's third component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3>
         : IEquatable<ValueTuple<T1, T2, T3>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3>>, IValueTupleInternal, ITuple
     {
@@ -834,7 +838,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -882,6 +886,7 @@ namespace System
     /// <typeparam name="T4">The type of the tuple's fourth component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3, T4>
         : IEquatable<ValueTuple<T1, T2, T3, T4>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3, T4>>, IValueTupleInternal, ITuple
     {
@@ -1058,7 +1063,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3, T4}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3, Item4)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -1109,6 +1114,7 @@ namespace System
     /// <typeparam name="T5">The type of the tuple's fifth component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3, T4, T5>
         : IEquatable<ValueTuple<T1, T2, T3, T4, T5>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3, T4, T5>>, IValueTupleInternal, ITuple
     {
@@ -1301,7 +1307,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3, T4, T5}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3, Item4, Item5)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -1355,6 +1361,7 @@ namespace System
     /// <typeparam name="T6">The type of the tuple's sixth component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3, T4, T5, T6>
         : IEquatable<ValueTuple<T1, T2, T3, T4, T5, T6>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3, T4, T5, T6>>, IValueTupleInternal, ITuple
     {
@@ -1563,7 +1570,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3, T4, T5, T6}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3, Item4, Item5, Item6)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -1620,6 +1627,7 @@ namespace System
     /// <typeparam name="T7">The type of the tuple's seventh component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3, T4, T5, T6, T7>
         : IEquatable<ValueTuple<T1, T2, T3, T4, T5, T6, T7>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3, T4, T5, T6, T7>>, IValueTupleInternal, ITuple
     {
@@ -1844,7 +1852,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3, T4, T5, T6, T7}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3, Item4, Item5, Item6, Item7)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {
@@ -1904,6 +1912,7 @@ namespace System
     /// <typeparam name="TRest">The type of the tuple's eighth component.</typeparam>
     [Serializable]
     [StructLayout(LayoutKind.Auto)]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]  
     public struct ValueTuple<T1, T2, T3, T4, T5, T6, T7, TRest>
     : IEquatable<ValueTuple<T1, T2, T3, T4, T5, T6, T7, TRest>>, IStructuralEquatable, IStructuralComparable, IComparable, IComparable<ValueTuple<T1, T2, T3, T4, T5, T6, T7, TRest>>, IValueTupleInternal, ITuple
     where TRest : struct
@@ -2177,7 +2186,7 @@ namespace System
                                                        rest.GetHashCode());
             }
 
-            Contract.Assert(false, "Missed all cases for computing ValueTuple hash code");
+            Debug.Fail("Missed all cases for computing ValueTuple hash code");
             return -1;
         }
 
@@ -2228,7 +2237,7 @@ namespace System
                                                        comparer.GetHashCode(Item7), rest.GetHashCode(comparer));
             }
 
-            Contract.Assert(false, "Missed all cases for computing ValueTuple hash code");
+            Debug.Fail("Missed all cases for computing ValueTuple hash code");
             return -1;
         }
 
@@ -2243,7 +2252,7 @@ namespace System
         /// <returns>The string representation of this <see cref="ValueTuple{T1, T2, T3, T4, T5, T6, T7, TRest}"/> instance.</returns>
         /// <remarks>
         /// The string returned by this method takes the form <c>(Item1, Item2, Item3, Item4, Item5, Item6, Item7, Rest)</c>.
-        /// If any field value is <see langword="null"/>, it is represented as <see cref="String.Empty"/>.
+        /// If any field value is <see langword="null"/>, it is represented as <see cref="string.Empty"/>.
         /// </remarks>
         public override string ToString()
         {

@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 using ILCompiler.DependencyAnalysis;
 using Internal.TypeSystem;
@@ -16,12 +17,11 @@ namespace ILCompiler
         private HashSet<ModuleDesc> _compilationModuleSet;
 
         public MultiFileCompilationModuleGroup(TypeSystemContext context, IEnumerable<ModuleDesc> compilationModuleSet)
-            : base(context)
         {
             _compilationModuleSet = new HashSet<ModuleDesc>(compilationModuleSet);
 
             // The fake assembly that holds compiler generated types is part of the compilation.
-            _compilationModuleSet.Add(this.GeneratedAssembly);
+            _compilationModuleSet.Add(context.GeneratedAssembly);
         }
 
         public sealed override bool ContainsType(TypeDesc type)
@@ -39,7 +39,12 @@ namespace ILCompiler
             return true;
         }
 
-        public sealed override bool ContainsMethod(MethodDesc method)
+        public sealed override bool ContainsTypeDictionary(TypeDesc type)
+        {
+            return ContainsType(type);
+        }
+
+        public sealed override bool ContainsMethodBody(MethodDesc method, bool unboxingStub)
         {
             if (method.HasInstantiation)
                 return true;
@@ -47,16 +52,32 @@ namespace ILCompiler
             return ContainsType(method.OwningType);
         }
 
-        public sealed override bool ExportsType(TypeDesc type)
+        public sealed override bool ContainsMethodDictionary(MethodDesc method)
         {
-            return false;
+            Debug.Assert(method.GetCanonMethodTarget(CanonicalFormKind.Specific) != method);
+            return ContainsMethodBody(method, false);
         }
 
-        public sealed override bool ExportsMethod(MethodDesc method)
+        public sealed override ExportForm GetExportTypeForm(TypeDesc type)
         {
-            return false;
+            return ExportForm.None;
         }
-        
+
+        public sealed override ExportForm GetExportTypeFormDictionary(TypeDesc type)
+        {
+            return ExportForm.None;
+        }
+
+        public sealed override ExportForm GetExportMethodForm(MethodDesc method, bool unboxingStub)
+        {
+            return ExportForm.None;
+        }
+
+        public override ExportForm GetExportMethodDictionaryForm(MethodDesc method)
+        {
+            return ExportForm.None;
+        }
+
         private bool IsModuleInCompilationGroup(EcmaModule module)
         {
             return _compilationModuleSet.Contains(module);
@@ -102,6 +123,12 @@ namespace ILCompiler
         public override bool ShouldPromoteToFullType(TypeDesc type)
         {
             return ShouldProduceFullVTable(type);
+        }
+
+        public override bool PresenceOfEETypeImpliesAllMethodsOnType(TypeDesc type)
+        {
+            return (type.HasInstantiation || type.IsArray) && ShouldProduceFullVTable(type) && 
+                   type.ConvertToCanonForm(CanonicalFormKind.Specific).IsCanonicalSubtype(CanonicalFormKind.Any);
         }
     }
 }

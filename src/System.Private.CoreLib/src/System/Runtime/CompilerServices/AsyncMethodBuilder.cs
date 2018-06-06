@@ -12,12 +12,12 @@
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
 using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Internal.Runtime.Augments;
+using Internal.Runtime.CompilerServices;
 
 using AsyncStatus = Internal.Runtime.Augments.AsyncStatus;
 using CausalityRelation = Internal.Runtime.Augments.CausalityRelation;
@@ -71,9 +71,7 @@ namespace System.Runtime.CompilerServices
         [DebuggerStepThrough]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Start<TStateMachine>(ref TStateMachine stateMachine) where TStateMachine : IAsyncStateMachine
-        {
-            AsyncMethodBuilderCore.Start(ref stateMachine);
-        }
+            => AsyncMethodBuilderCore.Start(ref stateMachine);
 
         /// <summary>Associates the builder with the state machine it represents.</summary>
         /// <param name="stateMachine">The heap-allocated state machine object.</param>
@@ -238,9 +236,7 @@ namespace System.Runtime.CompilerServices
         [DebuggerStepThrough]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Start<TStateMachine>(ref TStateMachine stateMachine) where TStateMachine : IAsyncStateMachine
-        {
-            AsyncMethodBuilderCore.Start(ref stateMachine);
-        }
+            => AsyncMethodBuilderCore.Start(ref stateMachine);
 
         /// <summary>Associates the builder with the state machine it represents.</summary>
         /// <param name="stateMachine">The heap-allocated state machine object.</param>
@@ -343,7 +339,6 @@ namespace System.Runtime.CompilerServices
         internal static void SetException(Task task, Exception exception)
         {
             if (exception == null) throw new ArgumentNullException(nameof(exception));
-            Contract.EndContractBlock();
 
             // If the exception represents cancellation, cancel the task.  Otherwise, fault the task.
             var oce = exception as OperationCanceledException;
@@ -438,9 +433,7 @@ namespace System.Runtime.CompilerServices
         [DebuggerStepThrough]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Start<TStateMachine>(ref TStateMachine stateMachine) where TStateMachine : IAsyncStateMachine
-        {
-            AsyncMethodBuilderCore.Start(ref stateMachine); // argument validation handled by AsyncMethodBuilderCore
-        }
+            => AsyncMethodBuilderCore.Start(ref stateMachine);
 
         /// <summary>Associates the builder with the state machine it represents.</summary>
         /// <param name="stateMachine">The heap-allocated state machine object.</param>
@@ -587,17 +580,13 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         /// <param name="result">The result for which we need a task.</param>
         /// <returns>The completed task containing the result.</returns>
-        private static Task<TResult> GetTaskForResult(TResult result)
+        internal static Task<TResult> GetTaskForResult(TResult result)
         {
             // Currently NUTC does not perform the optimization needed by this method.  The result is that
             // every call to this method results in quite a lot of work, including many allocations, which 
             // is the opposite of the intent.  For now, let's just return a new Task each time.
             // Bug 719350 tracks re-optimizing this in ProjectN.
 #if false
-            Contract.Ensures(
-                EqualityComparer<TResult>.Default.Equals(result, Contract.Result<Task<TResult>>().Result),
-                "The returned task's Result must return the same value as the specified result value.");
-
             // The goal of this function is to be give back a cached task if possible,
             // or to otherwise give back a new task.  To give back a cached task,
             // we need to be able to evaluate the incoming result value, and we need
@@ -622,7 +611,6 @@ namespace System.Runtime.CompilerServices
                 // - Boolean
                 // - Byte, SByte
                 // - Char
-                // - Decimal
                 // - Int32, UInt32
                 // - Int64, UInt64
                 // - Int16, UInt16
@@ -657,7 +645,6 @@ namespace System.Runtime.CompilerServices
                     (typeof(TResult) == typeof(Byte) && default(Byte) == (Byte)(object)result) ||
                     (typeof(TResult) == typeof(SByte) && default(SByte) == (SByte)(object)result) ||
                     (typeof(TResult) == typeof(Char) && default(Char) == (Char)(object)result) ||
-                    (typeof(TResult) == typeof(Decimal) && default(Decimal) == (Decimal)(object)result) ||
                     (typeof(TResult) == typeof(Int64) && default(Int64) == (Int64)(object)result) ||
                     (typeof(TResult) == typeof(UInt64) && default(UInt64) == (UInt64)(object)result) ||
                     (typeof(TResult) == typeof(Int16) && default(Int16) == (Int16)(object)result) ||
@@ -729,12 +716,32 @@ namespace System.Runtime.CompilerServices
         internal static void Start<TStateMachine>(ref TStateMachine stateMachine)
             where TStateMachine : IAsyncStateMachine
         {
-            // Async state machines are required not to throw, so no need for try/finally here.
             Thread currentThread = Thread.CurrentThread;
-            ExecutionContextSwitcher ecs = default(ExecutionContextSwitcher);
-            ExecutionContext.EstablishCopyOnWriteScope(currentThread, ref ecs);
+            ExecutionContext previousExecutionCtx = currentThread.ExecutionContext;
+            SynchronizationContext previousSyncCtx = currentThread.SynchronizationContext;
+
+            // Async state machines are required not to throw, so no need for try/finally here.
             stateMachine.MoveNext();
-            ecs.Undo(currentThread);
+
+            // The common case is that these have not changed, so avoid the cost of a write barrier if not needed.
+            if (previousSyncCtx != currentThread.SynchronizationContext)
+            {
+                // Restore changed SynchronizationContext back to previous
+                currentThread.SynchronizationContext = previousSyncCtx;
+            }
+
+            ExecutionContext currentExecutionCtx = currentThread.ExecutionContext;
+            if (previousExecutionCtx != currentExecutionCtx)
+            {
+                // Restore changed ExecutionContext back to previous
+                currentThread.ExecutionContext = previousExecutionCtx;
+                if ((currentExecutionCtx != null && currentExecutionCtx.HasChangeNotifications) ||
+                    (previousExecutionCtx != null && previousExecutionCtx.HasChangeNotifications))
+                {
+                    // There are change notifications; trigger any affected
+                    ExecutionContext.OnValuesChanged(currentExecutionCtx, previousExecutionCtx);
+                }
+            }
         }
 
         //
@@ -869,7 +876,6 @@ namespace System.Runtime.CompilerServices
             //
             if (stateMachine == null)
                 throw new ArgumentNullException(nameof(stateMachine));
-            Contract.EndContractBlock();
             if (cachedMoveNextAction == null)
                 throw new InvalidOperationException(SR.AsyncMethodBuilder_InstanceNotInitialized);
             Action unwrappedMoveNextAction = TryGetStateMachineForDebugger(cachedMoveNextAction);
@@ -911,7 +917,6 @@ namespace System.Runtime.CompilerServices
         internal static void ThrowAsync(Exception exception, SynchronizationContext targetContext)
         {
             if (exception == null) throw new ArgumentNullException(nameof(exception));
-            Contract.EndContractBlock();
 
             // If the user supplied a SynchronizationContext...
             if (targetContext != null)

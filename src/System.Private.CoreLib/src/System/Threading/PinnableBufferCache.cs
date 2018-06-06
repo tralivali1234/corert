@@ -401,9 +401,9 @@ namespace System.Threading
             else if (m_restockSize < 256)
                 m_restockSize = m_restockSize * 2;                // Grow quickly at small sizes
             else if (m_restockSize < 4096)
-                m_restockSize = m_restockSize * 3 / 2;            // Less agressively at large ones
+                m_restockSize = m_restockSize * 3 / 2;            // Less aggressively at large ones
             else
-                m_restockSize = 4096;                             // Cap how agressive we are
+                m_restockSize = 4096;                             // Cap how aggressive we are
 
             // Ensure we hit our minimums
             if (m_minBufferCount > m_buffersUnderManagement)
@@ -588,77 +588,6 @@ namespace System.Threading
         /// </summary>
         private int m_numAllocCalls;
 #endif
-
-        #endregion
-    }
-
-    /// <summary>
-    /// Schedules a callback roughly every gen 2 GC (you may see a Gen 0 an Gen 1 but only once)
-    /// (We can fix this by capturing the Gen 2 count at startup and testing, but I mostly don't care)
-    /// </summary>
-    internal sealed class Gen2GcCallback : CriticalFinalizerObject
-    {
-        public Gen2GcCallback()
-            : base()
-        {
-        }
-
-        /// <summary>
-        /// Schedule 'callback' to be called in the next GC.  If the callback returns true it is 
-        /// rescheduled for the next Gen 2 GC.  Otherwise the callbacks stop. 
-        /// 
-        /// NOTE: This callback will be kept alive until either the callback function returns false,
-        /// or the target object dies.
-        /// </summary>
-        public static void Register(Func<object, bool> callback, object targetObj)
-        {
-            // Create a unreachable object that remembers the callback function and target object.
-            Gen2GcCallback gcCallback = new Gen2GcCallback();
-            gcCallback.Setup(callback, targetObj);
-        }
-
-        #region Private
-
-        private Func<object, bool> m_callback;
-        private GCHandle m_weakTargetObj;
-
-        private void Setup(Func<object, bool> callback, object targetObj)
-        {
-            m_callback = callback;
-            m_weakTargetObj = GCHandle.Alloc(targetObj, GCHandleType.Weak);
-        }
-
-        ~Gen2GcCallback()
-        {
-            // Check to see if the target object is still alive.
-            object targetObj = m_weakTargetObj.Target;
-            if (targetObj == null)
-            {
-                // The target object is dead, so this callback object is no longer needed.
-                m_weakTargetObj.Free();
-                return;
-            }
-
-            // Execute the callback method.
-            try
-            {
-                if (!m_callback(targetObj))
-                {
-                    // If the callback returns false, this callback object is no longer needed.
-                    return;
-                }
-            }
-            catch
-            {
-                // Ensure that we still get a chance to resurrect this object, even if the callback throws an exception.
-            }
-
-            // Resurrect ourselves by re-registering for finalization.
-            if (!Environment.HasShutdownStarted /*&& !AppDomain.CurrentDomain.IsFinalizingForUnload()*/)
-            {
-                GC.ReRegisterForFinalize(this);
-            }
-        }
 
         #endregion
     }

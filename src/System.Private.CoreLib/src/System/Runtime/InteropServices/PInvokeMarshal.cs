@@ -2,14 +2,21 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Diagnostics.Contracts;
 using System.Security;
-using Internal.Runtime.CompilerHelpers;
-using Internal.Runtime.Augments;
 using Debug = System.Diagnostics.Debug;
 using System.Collections.Generic;
 using System.Threading;
 using System.Runtime.CompilerServices;
+
+using Internal.Runtime.Augments;
+using Internal.Runtime.CompilerHelpers;
+using Internal.Runtime.CompilerServices;
+
+#if BIT64
+using nuint = System.UInt64;
+#else
+using nuint = System.UInt32;
+#endif
 
 namespace System.Runtime.InteropServices
 {
@@ -31,6 +38,15 @@ namespace System.Runtime.InteropServices
         public static void SetLastWin32Error(int errorCode)
         {
             s_lastWin32Error = errorCode;
+        }
+
+        public static int GetHRForLastWin32Error()
+        {
+            int dwLastError = GetLastWin32Error();
+            if ((dwLastError & 0x80000000) == 0x80000000)
+                return dwLastError;
+            else
+                return (dwLastError & 0x0000FFFF) | unchecked((int)0x80070000);
         }
 
         public static unsafe IntPtr AllocHGlobal(IntPtr cb)
@@ -69,7 +85,6 @@ namespace System.Runtime.InteropServices
             {
                 throw new ArgumentNullException(nameof(s));
             }
-            Contract.EndContractBlock();
 
             return s.MarshalToString(globalAlloc: true, unicode: false);
         }
@@ -80,7 +95,6 @@ namespace System.Runtime.InteropServices
             {
                 throw new ArgumentNullException(nameof(s));
             }
-            Contract.EndContractBlock();
 
             return s.MarshalToString(globalAlloc: true, unicode: true); ;
         }
@@ -91,7 +105,6 @@ namespace System.Runtime.InteropServices
             {
                 throw new ArgumentNullException(nameof(s));
             }
-            Contract.EndContractBlock();
 
             return s.MarshalToString(globalAlloc: false, unicode: false);
         }
@@ -102,9 +115,67 @@ namespace System.Runtime.InteropServices
             {
                 throw new ArgumentNullException(nameof(s));
             }
-            Contract.EndContractBlock();
 
             return s.MarshalToString(globalAlloc: false, unicode: true);
+        }
+
+        public static unsafe void CopyToManaged(IntPtr source, Array destination, int startIndex, int length)
+        {
+            if (source == IntPtr.Zero)
+                throw new ArgumentNullException(nameof(source));
+            if (destination == null)
+                throw new ArgumentNullException(nameof(destination));
+            if (!destination.IsBlittable())
+                throw new ArgumentException(nameof(destination), SR.Arg_CopyNonBlittableArray);
+            if (startIndex < 0)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), SR.Arg_CopyOutOfRange);
+            if (length < 0)
+                throw new ArgumentOutOfRangeException(nameof(length), SR.Arg_CopyOutOfRange);
+            if ((uint)startIndex + (uint)length > (uint)destination.Length)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), SR.Arg_CopyOutOfRange);
+
+            nuint bytesToCopy = (nuint)length * destination.ElementSize;
+            nuint startOffset = (nuint)startIndex * destination.ElementSize;
+
+            fixed (byte* pDestination = &destination.GetRawArrayData())
+            {
+                byte* destinationData = pDestination + startOffset;
+                Buffer.Memmove(destinationData, (byte*)source, bytesToCopy);
+            }
+        }
+
+        public static unsafe void CopyToNative(Array source, int startIndex, IntPtr destination, int length)
+        {
+            if (source == null)
+                throw new ArgumentNullException(nameof(source));
+            if (!source.IsBlittable())
+                throw new ArgumentException(nameof(source), SR.Arg_CopyNonBlittableArray);
+            if (destination == IntPtr.Zero)
+                throw new ArgumentNullException(nameof(destination));
+            if (startIndex < 0)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), SR.Arg_CopyOutOfRange);
+            if (length < 0)
+                throw new ArgumentOutOfRangeException(nameof(length), SR.Arg_CopyOutOfRange);
+            if ((uint)startIndex + (uint)length > (uint)source.Length)
+                throw new ArgumentOutOfRangeException(nameof(startIndex), SR.Arg_CopyOutOfRange);
+
+            nuint bytesToCopy = (nuint)length * source.ElementSize;
+            nuint startOffset = (nuint)startIndex * source.ElementSize;
+
+            fixed (byte* pSource = &source.GetRawArrayData())
+            {
+                byte* sourceData = pSource + startOffset;
+                Buffer.Memmove((byte*)destination, sourceData, bytesToCopy);
+            }
+        }
+
+        public static unsafe IntPtr UnsafeAddrOfPinnedArrayElement(Array arr, int index)
+        {
+            if (arr == null)
+                throw new ArgumentNullException(nameof(arr));
+
+            byte* p = (byte*)Unsafe.AsPointer(ref arr.GetRawArrayData()) + (nuint)index * arr.ElementSize;
+            return (IntPtr)p;
         }
 
         #region Delegate marshalling
@@ -115,7 +186,7 @@ namespace System.Runtime.InteropServices
         /// Return the stub to the pinvoke marshalling stub
         /// </summary>
         /// <param name="del">The delegate</param>
-        public static IntPtr GetStubForPInvokeDelegate(Delegate del)
+        public static IntPtr GetFunctionPointerForDelegate(Delegate del)
         {
             if (del == null)
                 return IntPtr.Zero;
@@ -243,16 +314,13 @@ namespace System.Runtime.InteropServices
 
             var delegateThunk = new PInvokeDelegateThunk(del);
 
-            McgPInvokeDelegateData pinvokeDelegateData;
-            if (!RuntimeAugments.InteropCallbacks.TryGetMarshallerDataForDelegate(del.GetTypeHandle(), out pinvokeDelegateData))
-            {
-                Environment.FailFast("Couldn't find marshalling stubs for delegate.");
-            }
-
             //
             //  For open static delegates set target to ReverseOpenStaticDelegateStub which calls the static function pointer directly
             //
-            IntPtr pTarget = del.GetRawFunctionPointerForOpenStaticDelegate() == IntPtr.Zero ? pinvokeDelegateData.ReverseStub : pinvokeDelegateData.ReverseOpenStaticDelegateStub;
+            bool openStaticDelegate = del.GetRawFunctionPointerForOpenStaticDelegate() != IntPtr.Zero;
+
+            IntPtr pTarget = RuntimeAugments.InteropCallbacks.GetDelegateMarshallingStub(del.GetTypeHandle(), openStaticDelegate);
+            Debug.Assert(pTarget != IntPtr.Zero);
 
             RuntimeAugments.SetThunkData(s_thunkPoolHeap, delegateThunk.Thunk, delegateThunk.ContextData, pTarget);
 
@@ -262,9 +330,9 @@ namespace System.Runtime.InteropServices
         /// <summary>
         /// Retrieve the corresponding P/invoke instance from the stub
         /// </summary>
-        public static Delegate GetPInvokeDelegateForStub(IntPtr pStub, RuntimeTypeHandle delegateType)
+        public static Delegate GetDelegateForFunctionPointer(IntPtr ptr, RuntimeTypeHandle delegateType)
         {
-            if (pStub == IntPtr.Zero)
+            if (ptr == IntPtr.Zero)
                 return null;
             //
             // First try to see if this is one of the thunks we've allocated when we marshal a managed
@@ -273,7 +341,7 @@ namespace System.Runtime.InteropServices
             //
             IntPtr pContext;
             IntPtr pTarget;
-            if (s_thunkPoolHeap != null && RuntimeAugments.TryGetThunkData(s_thunkPoolHeap, pStub, out pContext, out pTarget))
+            if (s_thunkPoolHeap != null && RuntimeAugments.TryGetThunkData(s_thunkPoolHeap, ptr, out pContext, out pTarget))
             {
                 GCHandle handle;
                 unsafe
@@ -281,7 +349,7 @@ namespace System.Runtime.InteropServices
                     // Pull out Handle from context
                     handle = ((ThunkContextData*)pContext)->Handle;
                 }
-                Delegate target = InteropExtensions.UncheckedCast<Delegate>(handle.Target);
+                Delegate target = Unsafe.As<Delegate>(handle.Target);
 
                 //
                 // The delegate might already been garbage collected
@@ -301,15 +369,10 @@ namespace System.Runtime.InteropServices
             // We need to create the delegate that points to the invoke method of a
             // NativeFunctionPointerWrapper derived class
             //
-            McgPInvokeDelegateData pInvokeDelegateData;
-            if (!RuntimeAugments.InteropCallbacks.TryGetMarshallerDataForDelegate(delegateType, out pInvokeDelegateData))
-            {
-                return null;
-            }
-            return CalliIntrinsics.Call<Delegate>(
-                pInvokeDelegateData.ForwardDelegateCreationStub,
-                pStub
-            );
+            IntPtr pDelegateCreationStub = RuntimeAugments.InteropCallbacks.GetForwardDelegateCreationStub(delegateType);
+            Debug.Assert(pDelegateCreationStub != IntPtr.Zero);
+
+            return CalliIntrinsics.Call<Delegate>(pDelegateCreationStub, ptr);
         }
 
         /// <summary>
@@ -358,7 +421,7 @@ namespace System.Runtime.InteropServices
 
             }
 
-            T target = InteropExtensions.UncheckedCast<T>(handle.Target);
+            T target = Unsafe.As<T>(handle.Target);
 
             //
             // The delegate might already been garbage collected
@@ -375,11 +438,36 @@ namespace System.Runtime.InteropServices
         [McgIntrinsics]
         private static unsafe class CalliIntrinsics
         {
-            internal static T Call<T>(IntPtr pfn, IntPtr arg0) { throw new NotImplementedException(); }
+            internal static T Call<T>(IntPtr pfn, IntPtr arg0) { throw new NotSupportedException(); }
         }
         #endregion
 
         #region String marshalling
+        public static unsafe String PtrToStringUni(IntPtr ptr, int len)
+        {
+            if (ptr == IntPtr.Zero)
+                throw new ArgumentNullException(nameof(ptr));
+            if (len < 0)
+                throw new ArgumentException(nameof(len));
+
+            return new String((char*)ptr, 0, len);
+        }
+
+        public static unsafe String PtrToStringUni(IntPtr ptr)
+        {
+            if (IntPtr.Zero == ptr)
+            {
+                return null;
+            }
+            else if (IsWin32Atom(ptr))
+            {
+                return null;
+            }
+            else
+            {
+                return new String((char*)ptr);
+            }
+        }
 
         public static unsafe void StringBuilderToUnicodeString(System.Text.StringBuilder stringBuilder, ushort* destination)
         {
@@ -755,19 +843,12 @@ namespace System.Runtime.InteropServices
             }
             else // Let OS convert
             {
-                uint flags = (bestFit ? 0 : WC_NO_BEST_FIT_CHARS);
-                int defaultCharUsed = 0;
                 ConvertWideCharToMultiByte(pManaged,
                                            lenUnicode,
                                            pNative,
                                            length,
-                                           flags,
-                                           throwOnUnmappableChar ? new System.IntPtr(&defaultCharUsed) : default(IntPtr)
-                                           );
-                if (defaultCharUsed != 0)
-                {
-                    throw new ArgumentException(SR.Arg_InteropMarshalUnmappableChar);
-                }
+                                           bestFit,
+                                           throwOnUnmappableChar);
             }
 
             // Zero terminate

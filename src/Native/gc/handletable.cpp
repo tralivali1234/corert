@@ -79,7 +79,7 @@ __inline PTR_HandleTable Table(HHANDLETABLE hTable)
 /*
  * HndCreateHandleTable
  *
- * Alocates and initializes a handle table.
+ * Allocates and initializes a handle table.
  *
  */
 HHANDLETABLE HndCreateHandleTable(const uint32_t *pTypeFlags, uint32_t uTypeCount, ADIndex uADIndex)
@@ -933,7 +933,7 @@ void HndEnumHandles(HHANDLETABLE hTable, const uint32_t *puType, uint32_t uTypeC
  *
  * Multiple type scanning entrypoint for GC.
  *
- * This entrypoint is provided for GC-time scnas of the handle table ONLY.  It
+ * This entrypoint is provided for GC-time scans of the handle table ONLY.  It
  * enables ephemeral scanning of the table, and optionally ages the write barrier
  * as it scans.
  *
@@ -1056,7 +1056,7 @@ void HndScanHandlesForGC(HHANDLETABLE hTable, HANDLESCANPROC scanProc, uintptr_t
 /*
  * HndResetAgeMap
  *
- * Service to forceably reset the age map for a set of handles.
+ * Service to forcibly reset the age map for a set of handles.
  *
  * Provided for GC-time resetting the handle table's write barrier.  This is not
  * normally advisable, as it increases the amount of work that will be done in

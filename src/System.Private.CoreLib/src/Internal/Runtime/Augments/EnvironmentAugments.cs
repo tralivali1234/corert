@@ -3,33 +3,99 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Collections;
+using System.Diagnostics;
+using System.Collections.Generic;
 using System.Runtime;
 using System.Runtime.CompilerServices;
 
 namespace Internal.Runtime.Augments
 {
     /// <summary>For internal use only.  Exposes runtime functionality to the Environments implementation in corefx.</summary>
-    public static class EnvironmentAugments
+    public static partial class EnvironmentAugments
     {
+        public static string GetEnvironmentVariable(string variable)
+        {
+            if (variable == null)
+                throw new ArgumentNullException(nameof(variable));
+            return GetEnvironmentVariableCore(variable);
+        }
+
+        public static string GetEnvironmentVariable(string variable, EnvironmentVariableTarget target)
+        {
+            if (target == EnvironmentVariableTarget.Process)
+                return GetEnvironmentVariable(variable);
+
+            if (variable == null)
+                throw new ArgumentNullException(nameof(variable));
+
+            bool fromMachine = ValidateAndConvertRegistryTarget(target);
+            return GetEnvironmentVariableFromRegistry(variable, fromMachine: fromMachine);
+        }
+
+        public static void SetEnvironmentVariable(string variable, string value)
+        {
+            ValidateVariableAndValue(variable, ref value);
+
+            SetEnvironmentVariableCore(variable, value);
+        }
+
+        public static void SetEnvironmentVariable(string variable, string value, EnvironmentVariableTarget target)
+        {
+            if (target == EnvironmentVariableTarget.Process)
+            {
+                SetEnvironmentVariable(variable, value);
+                return;
+            }
+
+            ValidateVariableAndValue(variable, ref value);
+
+            bool fromMachine = ValidateAndConvertRegistryTarget(target);
+            SetEnvironmentVariableFromRegistry(variable, value, fromMachine: fromMachine);
+        }
+
+        private static void ValidateVariableAndValue(string variable, ref string value)
+        {
+            if (variable == null)
+                throw new ArgumentNullException(nameof(variable));
+
+            if (variable.Length == 0)
+                throw new ArgumentException(SR.Argument_StringZeroLength, nameof(variable));
+
+            if (variable[0] == '\0')
+                throw new ArgumentException(SR.Argument_StringFirstCharIsZero, nameof(variable));
+
+            if (variable.IndexOf('=') != -1)
+                throw new ArgumentException(SR.Argument_IllegalEnvVarName, nameof(variable));
+
+            if (string.IsNullOrEmpty(value) || value[0] == '\0')
+            {
+                // Explicitly null out value if it's empty
+                value = null;
+            }
+        }
+
+        public static IEnumerable<KeyValuePair<string, string>> EnumerateEnvironmentVariables(EnvironmentVariableTarget target)
+        {
+            if (target == EnvironmentVariableTarget.Process)
+                return EnumerateEnvironmentVariables();
+
+            bool fromMachine = ValidateAndConvertRegistryTarget(target);
+            return EnumerateEnvironmentVariablesFromRegistry(fromMachine: fromMachine);
+        }
+
+        private static bool ValidateAndConvertRegistryTarget(EnvironmentVariableTarget target)
+        {
+            Debug.Assert(target != EnvironmentVariableTarget.Process);
+            if (target == EnvironmentVariableTarget.Machine)
+                return true;
+            else if (target == EnvironmentVariableTarget.User)
+                return false;
+            else
+                throw new ArgumentOutOfRangeException(nameof(target), target, SR.Format(SR.Arg_EnumIllegalVal, target));
+        }
+
         public static int CurrentManagedThreadId => System.Threading.ManagedThreadId.Current;
         public static void FailFast(string message, Exception error) => RuntimeExceptionHelpers.FailFast(message, error);
-
-        public static void Exit(int exitCode)
-        {
-#if CORERT
-            s_latchedExitCode = exitCode;
-
-            ShutdownCore();
-
-            RuntimeImports.RhpShutdown();
-
-            Interop.ExitProcess(s_latchedExitCode);
-#else
-            // This needs to be implemented for ProjectN.
-            throw new PlatformNotSupportedException();
-#endif
-        }
 
         internal static void ShutdownCore()
         {
@@ -47,18 +113,6 @@ namespace Internal.Runtime.Augments
             {
                 s_latchedExitCode = value;
             }
-        }
-
-        private static string[] s_commandLineArgs;
-
-        internal static void SetCommandLineArgs(string[] args)
-        {
-            s_commandLineArgs = args;
-        }
-
-        public static string[] GetCommandLineArgs()
-        {
-            return (string[])s_commandLineArgs?.Clone();
         }
 
         public static bool HasShutdownStarted => false; // .NET Core does not have shutdown finalization
@@ -92,11 +146,6 @@ namespace Internal.Runtime.Augments
 
         public static int TickCount => Environment.TickCount;
 
-        public static string GetEnvironmentVariable(string variable) => Environment.GetEnvironmentVariable(variable);
-        public static string GetEnvironmentVariable(string variable, EnvironmentVariableTarget target) { throw new NotImplementedException(); }
-        public static IDictionary GetEnvironmentVariables() => Environment.GetEnvironmentVariables();
-        public static IDictionary GetEnvironmentVariables(EnvironmentVariableTarget target) { throw new NotImplementedException(); }
-        public static void SetEnvironmentVariable(string variable, string value) { throw new NotImplementedException(); }
-        public static void SetEnvironmentVariable(string variable, string value, EnvironmentVariableTarget target) { throw new NotImplementedException(); }
+        public static int ProcessorCount => Environment.ProcessorCount;
     }
 }

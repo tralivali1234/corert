@@ -17,7 +17,7 @@ namespace System.Runtime.InteropServices
             internal const string CORE_WINRT_STRING = "api-ms-win-core-winrt-string-l1-1-0.dll";
             internal const string CORE_WINRT_ERROR1 = "api-ms-win-core-winrt-error-l1-1-1.dll";
             internal const string CORE_WINRT_ERROR = "api-ms-win-core-winrt-error-l1-1-0.dll";
-
+            internal const string CORE_WINRT_TYPERESOLUTION = "api-ms-win-ro-typeresolution-l1-1-0.dll";
         }
 
         [DllImport(Libraries.CORE_WINRT_STRING)]
@@ -44,7 +44,7 @@ namespace System.Runtime.InteropServices
         [DllImport(Libraries.CORE_WINRT)]
         [McgGeneratedNativeCallCodeAttribute]
         [MethodImplAttribute(MethodImplOptions.NoInlining)]
-        public static extern unsafe int RoActivateInstance(void* hActivableClassId, out void* ppv);
+        public static extern unsafe int RoActivateInstance(void* hActivatableClassId, out void* ppv);
 
 
         [DllImport(Libraries.CORE_WINRT_ERROR, PreserveSig = true)]
@@ -68,5 +68,11 @@ namespace System.Runtime.InteropServices
         [DllImport(Libraries.CORE_WINRT_ERROR1, PreserveSig = true)]
         [McgGeneratedNativeCallCodeAttribute]
         internal static extern int RoReportUnhandledError(IntPtr pRestrictedErrorInfo);
+
+        [DllImport(Libraries.CORE_WINRT_TYPERESOLUTION, PreserveSig = true)]
+        internal static unsafe extern int RoParseTypeName(
+            HSTRING typename,
+            uint * typenamePartsLength,
+            IntPtr ** typenameParts);
     }
 }

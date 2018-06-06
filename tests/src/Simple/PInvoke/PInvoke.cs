@@ -181,6 +181,43 @@ namespace PInvokeTests
         [DllImport("*", CallingConvention = CallingConvention.StdCall)]
         static extern bool InlineArrayTest(ref InlineArrayStruct ias, ref InlineUnicodeStruct ius);
 
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl, SetLastError = true)]
+        public unsafe delegate void SetLastErrorFuncDelegate(int errorCode);
+
+        [DllImport("*", CallingConvention = CallingConvention.StdCall)]
+        internal static extern IntPtr GetFunctionPointer();
+
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        internal unsafe struct InlineString
+        {
+            internal uint size;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            internal string name;
+        }
+
+        [DllImport("*", CallingConvention = CallingConvention.StdCall)]
+        static extern bool InlineStringTest(ref InlineString ias);
+
+        internal delegate int Callback0();
+        internal delegate int Callback1();
+        internal delegate int Callback2();
+
+        [DllImport("*")]
+        internal static extern bool RegisterCallbacks(ref Callbacks callbacks);
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct Callbacks
+        {
+            public Callback0 callback0;
+            public Callback1 callback1;
+            public Callback2 callback2;
+        }
+
+        public static int callbackFunc0() { return 0; }
+        public static int callbackFunc1() { return 1; }
+        public static int callbackFunc2() { return 2; }
+
         public static int Main(string[] args)
         {
             TestBlittableType();
@@ -196,8 +233,9 @@ namespace PInvokeTests
             TestSizeParamIndex();
 #if !CODEGEN_CPP
             TestDelegate();
-#endif            
             TestStruct();
+            TestMarshalStructAPIs();
+#endif            
             return 100;
         }
 
@@ -460,6 +498,12 @@ namespace PInvokeTests
 
             Delegate_String ds = new Delegate_String((new ClosedDelegateCLass()).GetString);
             ThrowIfNotEquals(true, ReversePInvoke_String(ds), "Delegate marshalling failed.");
+
+            IntPtr procAddress = GetFunctionPointer();
+            SetLastErrorFuncDelegate funcDelegate =
+                Marshal.GetDelegateForFunctionPointer<SetLastErrorFuncDelegate>(procAddress);
+            funcDelegate(0x204);
+            ThrowIfNotEquals(0x204, Marshal.GetLastWin32Error(), "Not match");
         }
 
         static int Sum(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j)
@@ -520,6 +564,32 @@ namespace PInvokeTests
             public ExplicitStruct f2;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct NonBlittableStruct
+        {
+            public int f1;
+            public bool f2;
+            public bool f3;
+            public bool f4;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public class BlittableClass
+        {
+            public long f1;
+            public int f2;
+            public int f3;
+            public long f4;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public class NonBlittableClass
+        {
+            public bool f1;
+            public bool f2;
+            public int f3;
+        }
+
         private static void TestStruct()
         {
             Console.WriteLine("Testing Structs");
@@ -564,9 +634,13 @@ namespace PInvokeTests
                 ssa[i].f1 = 0;
                 ssa[i].f1 = i;
                 ssa[i].f2 = i*i;
-                ssa[i].f3 = i.ToString(); 
+                ssa[i].f3 = i.LowLevelToString(); 
             }
             ThrowIfNotEquals(true, StructTest_Array(ssa, ssa.Length), "Array of struct marshalling failed");
+
+            InlineString ils = new InlineString();
+            InlineStringTest(ref ils);
+            ThrowIfNotEquals("Hello World!", ils.name, "Inline string marshalling failed");
 
             InlineArrayStruct ias = new InlineArrayStruct();
             ias.inlineArray = new short[128];
@@ -581,7 +655,6 @@ namespace PInvokeTests
             InlineUnicodeStruct ius = new InlineUnicodeStruct();
             ius.inlineString = "Hello World";
 
-#if !CODEGEN_CPP
             ThrowIfNotEquals(true, InlineArrayTest(ref ias, ref ius), "inline array marshalling failed");
             bool pass = true;
             for (short i = 0; i < 128; i++)
@@ -597,7 +670,6 @@ namespace PInvokeTests
 
             ThrowIfNotEquals("Hello World", ius.inlineString, "Inline ByValTStr Unicode marshalling failed");
 
-            // RhpThrowEx is not implemented in CPPCodeGen
             pass = false;
             AutoStruct autoStruct = new AutoStruct();
             try
@@ -610,7 +682,65 @@ namespace PInvokeTests
                 pass = true;
             }
             ThrowIfNotEquals(true, pass, "Struct marshalling scenario6 failed.");
-#endif
+
+            Callbacks callbacks = new Callbacks();
+            callbacks.callback0 = new Callback0(callbackFunc0);
+            callbacks.callback1 = new Callback1(callbackFunc1);
+            callbacks.callback2 = new Callback2(callbackFunc2);
+            ThrowIfNotEquals(true,  RegisterCallbacks(ref callbacks), "Scenario 7: Struct with delegate marshalling failed");
+        }
+
+        private static void TestMarshalStructAPIs()
+        {
+            Console.WriteLine("Testing Marshal APIs for structs");
+
+            NonBlittableStruct ts = new NonBlittableStruct() { f1 = 100, f2 = true, f3 = false, f4 = true };
+            int size = Marshal.SizeOf<NonBlittableStruct>(ts);
+            ThrowIfNotEquals(16, size, "Marshal.SizeOf<NonBlittableStruct> failed");
+            IntPtr memory = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr<NonBlittableStruct>(ts, memory, false);
+                NonBlittableStruct ts2 = Marshal.PtrToStructure<NonBlittableStruct>(memory);
+                ThrowIfNotEquals(true, ts2.f1 == 100 && ts2.f2 == true && ts2.f3 == false && ts2.f4 == true, "NonBlittableStruct marshalling Marshal API failed");
+
+                IntPtr offset = Marshal.OffsetOf<NonBlittableStruct>("f2");
+                ThrowIfNotEquals(new IntPtr(4), offset, "Struct marshalling OffsetOf failed.");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(memory);
+            }
+
+            BlittableClass bc = new BlittableClass() { f1 = 100, f2 = 12345678, f3 = 999, f4 = -4 };
+            int bc_size = Marshal.SizeOf<BlittableClass>(bc);
+            ThrowIfNotEquals(24, bc_size, "Marshal.SizeOf<BlittableClass> failed");
+            IntPtr bc_memory = Marshal.AllocHGlobal(bc_size);
+            try
+            {
+                Marshal.StructureToPtr<BlittableClass>(bc, bc_memory, false);
+                BlittableClass bc2 = Marshal.PtrToStructure<BlittableClass>(bc_memory);
+                ThrowIfNotEquals(true, bc2.f1 == 100 && bc2.f2 == 12345678 && bc2.f3 == 999 && bc2.f4 == -4, "BlittableClass marshalling Marshal API failed");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(bc_memory);
+            }
+
+            NonBlittableClass nbc = new NonBlittableClass() { f1 = false, f2 = true, f3 = 42 };
+            int nbc_size = Marshal.SizeOf<NonBlittableClass>(nbc);
+            ThrowIfNotEquals(12, nbc_size, "Marshal.SizeOf<NonBlittableClass> failed");
+            IntPtr nbc_memory = Marshal.AllocHGlobal(nbc_size);
+            try
+            {
+                Marshal.StructureToPtr<NonBlittableClass>(nbc, nbc_memory, false);
+                NonBlittableClass nbc2 = Marshal.PtrToStructure<NonBlittableClass>(nbc_memory);
+                ThrowIfNotEquals(true, nbc2.f1 == false && nbc2.f2 == true && nbc2.f3 == 42, "NonBlittableClass marshalling Marshal API failed");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(nbc_memory);
+            }
         }
     }
 
@@ -640,4 +770,35 @@ namespace PInvokeTests
         }
     } //end of SafeMemoryHandle class
 
+    public static class LowLevelExtensions
+    {
+        // Int32.ToString() calls into glob/loc garbage that hits CppCodegen limitations
+        public static string LowLevelToString(this int i)
+        {
+            char[] digits = new char[11];
+            int numDigits = 0;
+
+            if (i == int.MinValue)
+                return "-2147483648";
+
+            bool negative = i < 0;
+            if (negative)
+                i = -i;
+
+            do
+            {
+                digits[numDigits] = (char)('0' + (i % 10));
+                numDigits++;
+                i /= 10;
+            }
+            while (i != 0);
+            if (negative)
+            {
+                digits[numDigits] = '-';
+                numDigits++;
+            }
+            Array.Reverse(digits);
+            return new string(digits, digits.Length - numDigits, numDigits);
+        }
+    }
 }

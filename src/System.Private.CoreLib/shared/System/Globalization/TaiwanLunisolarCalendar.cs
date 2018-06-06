@@ -3,7 +3,6 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
@@ -15,7 +14,6 @@ namespace System.Globalization
     **      TaiwanLunisolar     1912/01/01  2050/13/29
     */
 
-    [Serializable]
     public class TaiwanLunisolarCalendar : EastAsianLunisolarCalendar
     {
         // Since
@@ -265,13 +263,12 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                             "year",
-                            String.Format(
+                            string.Format(
                                 CultureInfo.CurrentCulture,
                                 SR.ArgumentOutOfRange_Range,
                                 MIN_LUNISOLAR_YEAR,
                                 MAX_LUNISOLAR_YEAR));
             }
-            Contract.EndContractBlock();
 
             return s_yinfo[lunarYear - MIN_LUNISOLAR_YEAR, index];
         }

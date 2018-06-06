@@ -3,8 +3,10 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Runtime.InteropServices;
 
 using Internal.Text;
+using Internal.TypeSystem;
 
 namespace ILCompiler.DependencyAnalysis
 {
@@ -15,11 +17,13 @@ namespace ILCompiler.DependencyAnalysis
     {
         private string _moduleName;
         private string _entryPointName;
+        private PInvokeFlags _flags;
 
-        public PInvokeMethodFixupNode(string moduleName, string entryPointName)
+        public PInvokeMethodFixupNode(string moduleName, string entryPointName, PInvokeFlags flags)
         {
             _moduleName = moduleName;
             _entryPointName = entryPointName;
+            _flags = flags;
         }
 
         public void AppendMangledName(NameMangler nameMangler, Utf8StringBuilder sb)
@@ -28,6 +32,13 @@ namespace ILCompiler.DependencyAnalysis
             sb.Append(_moduleName);
             sb.Append("__");
             sb.Append(_entryPointName);
+            if(!_flags.ExactSpelling)
+            {
+                sb.Append("__");
+                sb.Append(_flags.CharSet.ToString());
+            }
+            sb.Append("__");
+            sb.Append(((int)_flags.Attributes).ToString());
         }
         public int Offset => 0;
         public override bool IsShareable => true;
@@ -71,7 +82,24 @@ namespace ILCompiler.DependencyAnalysis
             // Module fixup cell
             builder.EmitPointerReloc(factory.PInvokeModuleFixup(_moduleName));
 
+            builder.EmitInt(_flags.ExactSpelling ? 0 : (int)_flags.CharSet);
+
             return builder.ToObjectData();
+        }
+
+        protected internal override int ClassCode => -1592006940;
+
+        protected internal override int CompareToImpl(SortableDependencyNode other, CompilerComparer comparer)
+        {
+            var flagsCompare = _flags.CompareTo(((PInvokeMethodFixupNode)other)._flags);
+            if (flagsCompare != 0)
+                return flagsCompare;
+
+            var moduleCompare = string.Compare(_moduleName, ((PInvokeMethodFixupNode)other)._moduleName);
+            if (moduleCompare != 0)
+                return moduleCompare;
+
+            return string.Compare(_entryPointName, ((PInvokeMethodFixupNode)other)._entryPointName);
         }
     }
 }

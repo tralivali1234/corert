@@ -26,11 +26,12 @@ namespace ILCompiler.DependencyAnalysis
             Debug.Assert(!type.IsCanonicalDefinitionType(CanonicalFormKind.Any));
             Debug.Assert(type.IsCanonicalSubtype(CanonicalFormKind.Any));
             Debug.Assert(type == type.ConvertToCanonForm(CanonicalFormKind.Specific));
+            Debug.Assert(!type.IsMdArray);
+            Debug.Assert(!type.IsByRefLike);
         }
 
         public override bool StaticDependenciesAreComputed => true;
         public override bool IsShareable => IsTypeNodeShareable(_type);
-        public override bool HasConditionalStaticDependencies => false;
         protected override bool EmitVirtualSlotsAndInterfaces => true;
         public override bool ShouldSkipEmittingObjectNode(NodeFactory factory) => false;
 
@@ -45,10 +46,30 @@ namespace ILCompiler.DependencyAnalysis
 
             DefType closestDefType = _type.GetClosestDefType();
 
-            if (_type.RuntimeInterfaces.Length > 0)
+            if (InterfaceDispatchMapNode.MightHaveInterfaceDispatchMap(_type, factory))
                 dependencyList.Add(factory.InterfaceDispatchMap(_type), "Canonical interface dispatch map");
 
-            dependencyList.Add(factory.VTable(_type), "VTable");
+            dependencyList.Add(factory.VTable(closestDefType), "VTable");
+
+            if (_type.IsCanonicalSubtype(CanonicalFormKind.Universal))
+                dependencyList.Add(factory.NativeLayout.TemplateTypeLayout(_type), "Universal generic types always have template layout");
+
+            // Track generic virtual methods that will get added to the GVM tables
+            if (TypeGVMEntriesNode.TypeNeedsGVMTableEntries(_type))
+            {
+                dependencyList.Add(new DependencyListEntry(factory.TypeGVMEntries(_type), "Type with generic virtual methods"));
+
+                AddDependenciesForUniversalGVMSupport(factory, _type, ref dependencyList);
+            }
+
+            // Keep track of the default constructor map dependency for this type if it has a default constructor
+            MethodDesc defaultCtor = closestDefType.GetDefaultConstructor();
+            if (defaultCtor != null)
+            {
+                dependencyList.Add(new DependencyListEntry(
+                    factory.MethodEntrypoint(defaultCtor, closestDefType.IsValueType),
+                    "DefaultConstructorNode"));
+            }
 
             return dependencyList;
         }
@@ -90,26 +111,24 @@ namespace ILCompiler.DependencyAnalysis
             }
         }
 
-        protected override void OutputBaseSize(ref ObjectDataBuilder objData)
+        protected override int BaseSize
         {
-            bool emitMinimumObjectSize = false;
-
-            if (_type.IsCanonicalSubtype(CanonicalFormKind.Universal) && _type.IsDefType)
+            get
             {
-                LayoutInt instanceByteCount = ((DefType)_type).InstanceByteCount;
-
-                if (instanceByteCount.IsIndeterminate)
+                if (_type.IsCanonicalSubtype(CanonicalFormKind.Universal) && _type.IsDefType)
                 {
-                    // For USG types, they may be of indeterminate size, and the size of the type may be meaningless. 
-                    // In that case emit a fixed constant.
-                    emitMinimumObjectSize = true;
-                }
-            }
+                    LayoutInt instanceByteCount = ((DefType)_type).InstanceByteCount;
 
-            if (emitMinimumObjectSize)
-                objData.EmitInt(MinimumObjectSize);
-            else
-                base.OutputBaseSize(ref objData);
+                    if (instanceByteCount.IsIndeterminate)
+                    {
+                        // For USG types, they may be of indeterminate size, and the size of the type may be meaningless. 
+                        // In that case emit a fixed constant.
+                        return MinimumObjectSize;
+                    }
+                }
+
+                return base.BaseSize;
+            }
         }
 
         protected override void ComputeValueTypeFieldPadding()
@@ -125,5 +144,7 @@ namespace ILCompiler.DependencyAnalysis
 
             base.ComputeValueTypeFieldPadding();
         }
+
+        protected internal override int ClassCode => -1798018602;
     }
 }

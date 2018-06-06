@@ -3,7 +3,6 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -15,15 +14,15 @@ namespace System.Threading
 
         private static void VerifyNameForCreate(string name)
         {
-            if (null != name && ((int)Interop.Constants.MaxPath) < name.Length)
+            if (null != name && Interop.Kernel32.MAX_PATH < name.Length)
             {
-                throw new ArgumentException(SR.Format(SR.Argument_WaitHandleNameTooLong, Interop.Constants.MaxPath), nameof(name));
+                throw new ArgumentException(SR.Format(SR.Argument_WaitHandleNameTooLong, Interop.Kernel32.MAX_PATH), nameof(name));
             }
         }
 
         private void CreateMutexCore(bool initiallyOwned, string name, out bool createdNew)
         {
-            Debug.Assert(name == null || name.Length <= (int)Interop.Constants.MaxPath);
+            Debug.Assert(name == null || name.Length <= Interop.Kernel32.MAX_PATH);
 
             uint mutexFlags = initiallyOwned ? (uint)Interop.Constants.CreateMutexInitialOwner : 0;
 
@@ -46,18 +45,17 @@ namespace System.Threading
         {
             if (name == null)
             {
-                throw new ArgumentNullException(nameof(name), SR.ArgumentNull_WithParamName);
+                throw new ArgumentNullException(nameof(name));
             }
 
             if (name.Length == 0)
             {
                 throw new ArgumentException(SR.Argument_EmptyName, nameof(name));
             }
-            if (((int)Interop.Constants.MaxPath) < (uint)name.Length)
+            if (Interop.Kernel32.MAX_PATH < (uint)name.Length)
             {
-                throw new ArgumentException(SR.Format(SR.Argument_WaitHandleNameTooLong, Interop.Constants.MaxPath), nameof(name));
+                throw new ArgumentException(SR.Format(SR.Argument_WaitHandleNameTooLong, Interop.Kernel32.MAX_PATH), nameof(name));
             }
-            Contract.EndContractBlock();
 
             result = null;
 

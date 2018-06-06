@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 namespace System.Globalization
 {
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
     public class CultureNotFoundException : ArgumentException
     {
         private string _invalidCultureName; // unrecognized culture name
@@ -17,28 +18,28 @@ namespace System.Globalization
         {
         }
 
-        public CultureNotFoundException(String message)
+        public CultureNotFoundException(string message)
             : base(message)
         {
         }
 
-        public CultureNotFoundException(String paramName, String message)
+        public CultureNotFoundException(string paramName, string message)
             : base(message, paramName)
         {
         }
 
-        public CultureNotFoundException(String message, Exception innerException)
+        public CultureNotFoundException(string message, Exception innerException)
             : base(message, innerException)
         {
         }
 
-        public CultureNotFoundException(String paramName, string invalidCultureName, String message)
+        public CultureNotFoundException(string paramName, string invalidCultureName, string message)
             : base(message, paramName)
         {
             _invalidCultureName = invalidCultureName;
         }
 
-        public CultureNotFoundException(String message, string invalidCultureName, Exception innerException)
+        public CultureNotFoundException(string message, string invalidCultureName, Exception innerException)
             : base(message, innerException)
         {
             _invalidCultureName = invalidCultureName;
@@ -80,7 +81,7 @@ namespace System.Globalization
             get { return _invalidCultureName; }
         }
 
-        private static String DefaultMessage
+        private static string DefaultMessage
         {
             get
             {
@@ -88,24 +89,24 @@ namespace System.Globalization
             }
         }
 
-        private String FormatedInvalidCultureId
+        private string FormatedInvalidCultureId
         {
             get
             {
                 return InvalidCultureId != null ?
-                    String.Format(CultureInfo.InvariantCulture, "{0} (0x{0:x4})", (int)InvalidCultureId) :
+                    string.Format(CultureInfo.InvariantCulture, "{0} (0x{0:x4})", (int)InvalidCultureId) :
                     InvalidCultureName;
             }
         }
 
-        public override String Message
+        public override string Message
         {
             get
             {
-                String s = base.Message;
+                string s = base.Message;
                 if (_invalidCultureId != null || _invalidCultureName != null)
                 {
-                    String valueMessage = SR.Format(SR.Argument_CultureInvalidIdentifier, FormatedInvalidCultureId);
+                    string valueMessage = SR.Format(SR.Argument_CultureInvalidIdentifier, FormatedInvalidCultureId);
                     if (s == null)
                     {
                         return valueMessage;

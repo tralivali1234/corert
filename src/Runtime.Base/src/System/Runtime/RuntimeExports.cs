@@ -11,6 +11,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 
 using Internal.Runtime;
+using Internal.Runtime.CompilerServices;
 
 namespace System.Runtime
 {
@@ -268,6 +269,25 @@ namespace System.Runtime
             }
             else
                 return new Wrapper();
+        }
+
+        // RhAllocLocal2 helper returns the pointer to the data region directly
+        // instead of relying on the code generator to offset the local by the 
+        // size of a pointer to get the data region.
+        [RuntimeExport("RhAllocLocal2")]
+        public static unsafe ref byte RhAllocLocal2(EETypePtr pEEType)
+        {
+            EEType* ptrEEType = (EEType*)pEEType.ToPointer();
+            if (ptrEEType->IsValueType)
+            {
+#if FEATURE_64BIT_ALIGNMENT
+                if (ptrEEType->RequiresAlign8)
+                    return ref InternalCalls.RhpNewFastMisalign(ptrEEType).GetRawData();
+#endif
+                return ref InternalCalls.RhpNewFast(ptrEEType).GetRawData();
+            }
+            else
+                return ref new Wrapper().GetRawData();
         }
 
         [RuntimeExport("RhMemberwiseClone")]

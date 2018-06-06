@@ -9,6 +9,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Runtime.General;
 using System.Reflection.Runtime.Modules;
+using System.Reflection.Runtime.Modules.EcmaFormat;
 using System.Reflection.Runtime.MethodInfos;
 using System.Reflection.Runtime.MethodInfos.EcmaFormat;
 using System.Reflection.Runtime.TypeInfos;
@@ -92,6 +93,30 @@ namespace System.Reflection.Runtime.Assemblies.EcmaFormat
                     foreach (TypeDefinitionHandle typeDefinitionHandle in allTypes)
                         yield return typeDefinitionHandle.ResolveTypeDefinition(reader);
                 }*/
+            }
+        }
+
+        protected sealed override IEnumerable<TypeForwardInfo> TypeForwardInfos
+        {
+            get
+            {
+                MetadataReader reader = MetadataReader;
+                foreach (ExportedTypeHandle exportedTypeHandle in reader.ExportedTypes)
+                {
+                    ExportedType exportedType = reader.GetExportedType(exportedTypeHandle);
+                    if (!exportedType.IsForwarder)
+                        continue;
+
+                    EntityHandle implementation = exportedType.Implementation;
+                    if (implementation.Kind != HandleKind.AssemblyReference) // This check also weeds out nested types. This is intentional.
+                        continue;
+                    RuntimeAssemblyName redirectedAssemblyName = ((AssemblyReferenceHandle)implementation).ToRuntimeAssemblyName(reader);
+
+                    string typeName = exportedType.Name.GetString(reader);
+                    string namespaceName = exportedType.Namespace.GetString(reader);
+
+                    yield return new TypeForwardInfo(redirectedAssemblyName, namespaceName, typeName);
+                }
             }
         }
 
@@ -231,6 +256,22 @@ namespace System.Reflection.Runtime.Assemblies.EcmaFormat
             }
         }
 
+        public sealed override string ImageRuntimeVersion
+        {
+            get
+            {
+                return MetadataReader.MetadataVersion;
+            }
+        }
+
+        public sealed override Module ManifestModule
+        {
+            get
+            {
+                return EcmaFormatRuntimeModule.GetRuntimeModule(this);
+            }
+        }
+
         internal sealed override RuntimeAssemblyName RuntimeAssemblyName
         {
             get
@@ -247,6 +288,9 @@ namespace System.Reflection.Runtime.Assemblies.EcmaFormat
 
         public bool Equals(EcmaFormatRuntimeAssembly other)
         {
+            if (other == null)
+                return false;
+
             return Object.ReferenceEquals(other.MetadataReader, MetadataReader);
         }
 

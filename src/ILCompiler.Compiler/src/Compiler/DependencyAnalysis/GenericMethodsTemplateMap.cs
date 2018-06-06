@@ -85,6 +85,9 @@ namespace ILCompiler.DependencyAnalysis
             if (!IsEligibleToBeATemplate(method))
                 return;
 
+            if (!factory.MetadataManager.SupportsReflection)
+                return;
+
             dependencies = dependencies ?? new DependencyList();
             dependencies.Add(new DependencyListEntry(factory.NativeLayout.TemplateMethodEntry(method), "Template Method Entry"));
             dependencies.Add(new DependencyListEntry(factory.NativeLayout.TemplateMethodLayout(method), "Template Method Layout"));
@@ -93,6 +96,9 @@ namespace ILCompiler.DependencyAnalysis
         private static bool IsEligibleToBeATemplate(MethodDesc method)
         {
             if (!method.HasInstantiation)
+                return false;
+
+            if (method.IsAbstract)
                 return false;
 
             if (method.IsCanonicalMethod(CanonicalFormKind.Specific))
@@ -110,5 +116,8 @@ namespace ILCompiler.DependencyAnalysis
 
             return false;
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.GenericMethodsTemplateMap;
     }
 }

@@ -9,6 +9,7 @@ using System.Reflection.Runtime.General;
 using System.Reflection.Runtime.MethodInfos;
 using System.Runtime.InteropServices;
 
+using Internal.Reflection.Tracing;
 using Internal.Reflection.Core.Execution;
 
 namespace System.Reflection.Runtime.TypeInfos
@@ -35,6 +36,28 @@ namespace System.Reflection.Runtime.TypeInfos
         public sealed override string Namespace => BaseType.Namespace;
         public sealed override StructLayoutAttribute StructLayoutAttribute => BaseType.StructLayoutAttribute;
         public sealed override string ToString() => BaseType.ToString();
+
+        public sealed override IEnumerable<CustomAttributeData> CustomAttributes
+        {
+            get
+            {
+#if ENABLE_REFLECTION_TRACE
+                if (ReflectionTrace.Enabled)
+                    ReflectionTrace.TypeInfo_CustomAttributes(this);
+#endif
+
+                return Empty<CustomAttributeData>.Enumerable;
+            }
+        }
+
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other));
+
+            // This logic is written to match CoreCLR's behavior.
+            return other is RuntimeCLSIDTypeInfo;
+        }
 
         protected sealed override TypeAttributes GetAttributeFlagsImpl() => TypeAttributes.Public;
         protected sealed override int InternalGetHashCode() => _key.GetHashCode();

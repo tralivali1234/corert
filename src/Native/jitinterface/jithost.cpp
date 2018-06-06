@@ -78,7 +78,7 @@ public:
     }
 };
 
-DLL_EXPORT void* __stdcall GetJitHost(JitConfigProvider* pConfigProvider)
+DLL_EXPORT void* GetJitHost(JitConfigProvider* pConfigProvider)
 {
     return new JitHost(pConfigProvider);
 }

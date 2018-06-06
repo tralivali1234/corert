@@ -4,7 +4,6 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
@@ -20,7 +19,6 @@ namespace System.Globalization
     **      Thai        0544/01/01  10542/12/31
     ============================================================================*/
 
-    [Serializable]
     public class ThaiBuddhistCalendar : Calendar
     {
         // Initialize our era info.
@@ -123,7 +121,6 @@ namespace System.Globalization
         }
 
 
-        [SuppressMessage("Microsoft.Contracts", "CC1055")]  // Skip extra error checking to avoid *potential* AppCompat problems.
         public override int GetWeekOfYear(DateTime time, CalendarWeekRule rule, DayOfWeek firstDayOfWeek)
         {
             return (helper.GetWeekOfYear(time, rule, firstDayOfWeek));
@@ -209,7 +206,7 @@ namespace System.Globalization
                 {
                     throw new ArgumentOutOfRangeException(
                                 "year",
-                                String.Format(
+                                string.Format(
                                     CultureInfo.CurrentCulture,
                                     SR.ArgumentOutOfRange_Range,
                                     99,
@@ -227,7 +224,6 @@ namespace System.Globalization
                 throw new ArgumentOutOfRangeException(nameof(year),
                     SR.ArgumentOutOfRange_NeedNonNegNum);
             }
-            Contract.EndContractBlock();
 
             return (helper.ToFourDigitYear(year, this.TwoDigitYearMax));
         }

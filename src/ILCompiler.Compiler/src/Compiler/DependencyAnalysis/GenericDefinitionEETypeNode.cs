@@ -24,7 +24,12 @@ namespace ILCompiler.DependencyAnalysis
 
         protected override DependencyList ComputeNonRelocationBasedDependencies(NodeFactory factory)
         {
-            return null;
+            DependencyList dependencyList = null;
+
+            // Ask the metadata manager if we have any dependencies due to reflectability.
+            factory.MetadataManager.GetDependenciesDueToReflectability(ref dependencyList, factory, _type);
+
+            return dependencyList;
         }
 
         protected internal override void ComputeOptionalEETypeFields(NodeFactory factory, bool relocsOnly)
@@ -46,6 +51,8 @@ namespace ILCompiler.DependencyAnalysis
                 flags |= (short)EETypeFlags.IsInterfaceFlag;
             if (factory.TypeSystemContext.HasLazyStaticConstructor(_type))
                 rareFlags = rareFlags | EETypeRareFlags.HasCctorFlag;
+            if (_type.IsByRefLike)
+                rareFlags |= EETypeRareFlags.IsByRefLikeFlag;
 
             if (rareFlags != 0)
                 _optionalFieldsBuilder.SetFieldValue(EETypeOptionalFieldTag.RareFlags, (uint)rareFlags);
@@ -68,5 +75,7 @@ namespace ILCompiler.DependencyAnalysis
 
             return dataBuilder.ToObjectData();
         }
+
+        protected internal override int ClassCode => -160325006;
     }
 }

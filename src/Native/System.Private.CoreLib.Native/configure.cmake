@@ -4,8 +4,6 @@ include(CheckLibraryExists)
 
 check_library_exists(pthread pthread_condattr_setclock "" HAVE_PTHREAD_CONDATTR_SETCLOCK)
 
-check_include_files(uuid/uuid.h HAVE_LIBUUID_H)
-
 check_cxx_source_runs("
 #include <stdlib.h>
 #include <time.h>
@@ -62,10 +60,7 @@ int main(void)
 }" HAVE_SCHED_GETCPU)
 set(CMAKE_REQUIRED_LIBRARIES)
 
-if(NOT HAVE_LIBUUID_H) 
-  unset(HAVE_LIBUUID_H CACHE)
-  message(FATAL_ERROR "Cannot find libuuid. Try installing uuid-dev or the appropriate packages for your platform") 
-endif()
+check_include_files(gnu/lib-names.h HAVE_GNU_LIBNAMES_H)
 
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/config.h.in

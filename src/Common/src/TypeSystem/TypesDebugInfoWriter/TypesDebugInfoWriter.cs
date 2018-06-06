@@ -12,46 +12,94 @@ namespace Internal.TypeSystem.TypesDebugInfo
 
         uint GetClassTypeIndex(ClassTypeDescriptor classTypeDescriptor);
 
-        uint GetCompleteClassTypeIndex(ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptor classFieldsTypeDescriptior, DataFieldDescriptor[] fields);
+        uint GetCompleteClassTypeIndex(ClassTypeDescriptor classTypeDescriptor, ClassFieldsTypeDescriptor classFieldsTypeDescriptor, DataFieldDescriptor[] fields);
+
+        uint GetArrayTypeIndex(ClassTypeDescriptor classDescriptor, ArrayTypeDescriptor arrayTypeDescriprtor);
+
+        uint GetPointerTypeIndex(PointerTypeDescriptor pointerDescriptor);
+
+        uint GetMemberFunctionTypeIndex(MemberFunctionTypeDescriptor memberDescriptor, uint[] argumentTypes);
+
+        uint GetMemberFunctionId(MemberFunctionIdTypeDescriptor memberIdDescriptor);
+
+        uint GetPrimitiveTypeIndex(TypeDesc type);
+
+        string GetMangledName(TypeDesc type);
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct EnumRecordTypeDescriptor
     {
         public ulong Value;
         public string Name;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct EnumTypeDescriptor
     {
-        public ulong ElementType;
+        public uint ElementType;
         public ulong ElementCount;
         public string Name;
-        public string UniqueName;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct ClassTypeDescriptor
     {
         public int IsStruct;
         public string Name;
-        public string UniqueName;
         public uint BaseClassId;
+        public ulong InstanceSize;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct DataFieldDescriptor
     {
         public uint FieldTypeIndex;
-        public int Offset;
+        public ulong Offset;
         public string Name;
     }
 
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential)]
     public struct ClassFieldsTypeDescriptor
     {
-        public int Size;
+        public ulong Size;
         public int FieldsCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ArrayTypeDescriptor
+    {
+        public uint Rank;
+        public uint ElementType;
+        public uint Size;
+        public int IsMultiDimensional;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PointerTypeDescriptor
+    {
+        public uint ElementType;
+        public int IsReference;
+        public int IsConst;
+        public int Is64Bit; // Otherwise, 32 bit
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MemberFunctionTypeDescriptor
+    {
+        public uint ReturnType;
+        public uint ContainingClass;
+        public uint TypeIndexOfThisPointer;
+        public uint ThisAdjust;
+        public uint CallingConvention;
+        public ushort NumberOfArguments;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MemberFunctionIdTypeDescriptor
+    {
+        public uint MemberFunction;
+        public uint ParentClass;
+        public string Name;
     }
 }

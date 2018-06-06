@@ -4,8 +4,7 @@
 
 using System;
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
-using System.Runtime.Serialization;
+using System.Runtime.InteropServices;
 
 namespace System.Text
 {
@@ -19,11 +18,9 @@ namespace System.Text
     // Note: IsAlwaysNormalized remains false because 1/2 the code points are unassigned, so they'd
     //       use fallbacks, and we cannot guarantee that fallbacks are normalized.
 
-    [Serializable]
     public class ASCIIEncoding : Encoding
     {
         // Allow for devirtualization (see https://github.com/dotnet/coreclr/pull/9230)
-        [Serializable]
         internal sealed class ASCIIEncodingSealed : ASCIIEncoding { }
 
         // Used by Encoding.ASCII for lazy initialization
@@ -69,7 +66,6 @@ namespace System.Text
 
             if (chars.Length - index < count)
                 throw new ArgumentOutOfRangeException("chars", SR.ArgumentOutOfRange_IndexCountBuffer);
-            Contract.EndContractBlock();
 
             // If no input, return 0, avoid fixed empty array problem
             if (count == 0)
@@ -90,7 +86,6 @@ namespace System.Text
             // Validate input
             if (chars==null)
                 throw new ArgumentNullException("chars");
-            Contract.EndContractBlock();
 
             fixed (char* pChars = chars)
                 return GetByteCount(pChars, chars.Length, null);
@@ -109,7 +104,6 @@ namespace System.Text
 
             if (count < 0)
                 throw new ArgumentOutOfRangeException("count", SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             // Call it with empty encoder
             return GetByteCount(chars, count, null);
@@ -134,15 +128,10 @@ namespace System.Text
 
             if (byteIndex < 0 || byteIndex > bytes.Length)
                 throw new ArgumentOutOfRangeException("byteIndex", SR.ArgumentOutOfRange_Index);
-            Contract.EndContractBlock();
 
             int byteCount = bytes.Length - byteIndex;
 
-            // Fixed doesn't like empty byte arrays
-            if (bytes.Length == 0)
-                bytes = new byte[1];
-
-            fixed (char* pChars = chars) fixed (byte* pBytes = &bytes[0])
+            fixed (char* pChars = chars) fixed (byte* pBytes = &MemoryMarshal.GetReference((Span<byte>)bytes))
                 return GetBytes(pChars + charIndex, charCount, pBytes + byteIndex, byteCount, null);
         }
 
@@ -175,20 +164,15 @@ namespace System.Text
 
             if (byteIndex < 0 || byteIndex > bytes.Length)
                 throw new ArgumentOutOfRangeException("byteIndex", SR.ArgumentOutOfRange_Index);
-            Contract.EndContractBlock();
 
-            // If nothing to encode return 0, avoid fixed problem
+            // If nothing to encode return 0
             if (charCount == 0)
                 return 0;
 
             // Just call pointer version
             int byteCount = bytes.Length - byteIndex;
 
-            // Fixed doesn't like empty byte arrays
-            if (bytes.Length == 0)
-                bytes = new byte[1];
-
-            fixed (char* pChars = chars)  fixed (byte* pBytes = &bytes[0])
+            fixed (char* pChars = chars)  fixed (byte* pBytes = &MemoryMarshal.GetReference((Span<byte>)bytes))
                 // Remember that byteCount is # to decode, not size of array.
                 return GetBytes(pChars + charIndex, charCount, pBytes + byteIndex, byteCount, null);
         }
@@ -206,7 +190,6 @@ namespace System.Text
 
             if (charCount < 0 || byteCount < 0)
                 throw new ArgumentOutOfRangeException((charCount < 0 ? "charCount" : "byteCount"), SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             return GetBytes(chars, charCount, bytes, byteCount, null);
         }
@@ -230,7 +213,6 @@ namespace System.Text
 
             if (bytes.Length - index < count)
                 throw new ArgumentOutOfRangeException("bytes", SR.ArgumentOutOfRange_IndexCountBuffer);
-            Contract.EndContractBlock();
 
             // If no input just return 0, fixed doesn't like 0 length arrays
             if (count == 0)
@@ -254,7 +236,6 @@ namespace System.Text
 
             if (count < 0)
                 throw new ArgumentOutOfRangeException("count", SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             return GetCharCount(bytes, count, null);
         }
@@ -279,7 +260,6 @@ namespace System.Text
 
             if (charIndex < 0 || charIndex > chars.Length)
                 throw new ArgumentOutOfRangeException("charIndex", SR.ArgumentOutOfRange_Index);
-            Contract.EndContractBlock();
 
             // If no input, return 0 & avoid fixed problem
             if (byteCount == 0)
@@ -288,11 +268,7 @@ namespace System.Text
             // Just call pointer version
             int charCount = chars.Length - charIndex;
 
-            // Fixed doesn't like empty char arrays
-            if (chars.Length == 0)
-                chars = new char[1];
-
-            fixed (byte* pBytes = bytes) fixed (char* pChars = &chars[0])
+            fixed (byte* pBytes = bytes) fixed (char* pChars = &MemoryMarshal.GetReference((Span<char>)chars))
                 // Remember that charCount is # to decode, not size of array
                 return GetChars(pBytes + byteIndex, byteCount, pChars + charIndex, charCount, null);
         }
@@ -310,7 +286,6 @@ namespace System.Text
 
             if (charCount < 0 || byteCount < 0)
                 throw new ArgumentOutOfRangeException((charCount < 0 ? "charCount" : "byteCount"), SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             return GetChars(bytes, byteCount, chars, charCount, null);
         }
@@ -323,7 +298,7 @@ namespace System.Text
         // EncodingNLS, UTF7Encoding, UTF8Encoding, UTF32Encoding, ASCIIEncoding, UnicodeEncoding
         // parent method is safe
 
-        public override unsafe String GetString(byte[] bytes, int byteIndex, int byteCount)
+        public override unsafe string GetString(byte[] bytes, int byteIndex, int byteCount)
         {
             // Validate Parameters
             if (bytes == null)
@@ -335,13 +310,12 @@ namespace System.Text
 
             if (bytes.Length - byteIndex < byteCount)
                 throw new ArgumentOutOfRangeException("bytes", SR.ArgumentOutOfRange_IndexCountBuffer);
-            Contract.EndContractBlock();
 
             // Avoid problems with empty input buffer
-            if (byteCount == 0) return String.Empty;
+            if (byteCount == 0) return string.Empty;
 
             fixed (byte* pBytes = bytes)
-                return String.CreateStringFromEncoding(
+                return string.CreateStringFromEncoding(
                     pBytes + byteIndex, byteCount, this);
         }
 
@@ -373,7 +347,7 @@ namespace System.Text
 
             if (encoder != null)
             {
-                charLeftOver = encoder.charLeftOver;
+                charLeftOver = encoder._charLeftOver;
                 Debug.Assert(charLeftOver == 0 || Char.IsHighSurrogate(charLeftOver),
                     "[ASCIIEncoding.GetByteCount]leftover character should be high surrogate");
 
@@ -384,7 +358,7 @@ namespace System.Text
                 {
                     // We always need the fallback buffer in get bytes so we can flush any remaining ones if necessary
                     fallbackBuffer = encoder.FallbackBuffer;
-                    if (fallbackBuffer.Remaining > 0 && encoder.m_throwOnOverflow)
+                    if (fallbackBuffer.Remaining > 0 && encoder._throwOnOverflow)
                         throw new ArgumentException(SR.Format(SR.Argument_EncoderFallbackNotEmpty, this.EncodingName, encoder.Fallback.GetType()));
 
                     // Set our internal fallback interesting things.
@@ -392,7 +366,7 @@ namespace System.Text
                 }
 
                 // Verify that we have no fallbackbuffer, for ASCII its always empty, so just assert
-                Debug.Assert(!encoder.m_throwOnOverflow || !encoder.InternalHasFallbackBuffer ||
+                Debug.Assert(!encoder._throwOnOverflow || !encoder.InternalHasFallbackBuffer ||
                     encoder.FallbackBuffer.Remaining == 0,
                     "[ASCIICodePageEncoding.GetByteCount]Expected empty fallback buffer");
             }
@@ -513,7 +487,7 @@ namespace System.Text
 
             if (encoder != null)
             {
-                charLeftOver = encoder.charLeftOver;
+                charLeftOver = encoder._charLeftOver;
                 fallback = encoder.Fallback as EncoderReplacementFallback;
 
                 // We mustn't have left over fallback data when counting
@@ -521,7 +495,7 @@ namespace System.Text
                 {
                     // We always need the fallback buffer in get bytes so we can flush any remaining ones if necessary
                     fallbackBuffer = encoder.FallbackBuffer;
-                    if (fallbackBuffer.Remaining > 0 && encoder.m_throwOnOverflow)
+                    if (fallbackBuffer.Remaining > 0 && encoder._throwOnOverflow)
                         throw new ArgumentException(SR.Format(SR.Argument_EncoderFallbackNotEmpty, this.EncodingName, encoder.Fallback.GetType()));
 
                     // Set our internal fallback interesting things.
@@ -532,7 +506,7 @@ namespace System.Text
                     "[ASCIIEncoding.GetBytes]leftover character should be high surrogate");
 
                 // Verify that we have no fallbackbuffer, for ASCII its always empty, so just assert
-                Debug.Assert(!encoder.m_throwOnOverflow || !encoder.InternalHasFallbackBuffer ||
+                Debug.Assert(!encoder._throwOnOverflow || !encoder.InternalHasFallbackBuffer ||
                     encoder.FallbackBuffer.Remaining == 0,
                     "[ASCIICodePageEncoding.GetBytes]Expected empty fallback buffer");
             }
@@ -590,8 +564,8 @@ namespace System.Text
                     // Clear encoder
                     if (encoder != null)
                     {
-                        encoder.charLeftOver = (char)0;
-                        encoder.m_charsUsed = (int)(chars - charStart);
+                        encoder._charLeftOver = (char)0;
+                        encoder._charsUsed = (int)(chars - charStart);
                     }
 
                     return (int)(bytes - byteStart);
@@ -688,14 +662,14 @@ namespace System.Text
                 // Fallback stuck it in encoder if necessary, but we have to clear MustFlush cases
                 if (fallbackBuffer != null && !fallbackBuffer.bUsedEncoder)
                     // Clear it in case of MustFlush
-                    encoder.charLeftOver = (char)0;
+                    encoder._charLeftOver = (char)0;
 
                 // Set our chars used count
-                encoder.m_charsUsed = (int)(chars - charStart);
+                encoder._charsUsed = (int)(chars - charStart);
             }
 
             Debug.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0 ||
-                (encoder != null && !encoder.m_throwOnOverflow),
+                (encoder != null && !encoder._throwOnOverflow),
                 "[ASCIIEncoding.GetBytes]Expected Empty fallback buffer at end");
 
             return (int)(bytes - byteStart);
@@ -716,7 +690,7 @@ namespace System.Text
             else
             {
                 fallback = decoder.Fallback as DecoderReplacementFallback;
-                Debug.Assert(!decoder.m_throwOnOverflow || !decoder.InternalHasFallbackBuffer ||
+                Debug.Assert(!decoder._throwOnOverflow || !decoder.InternalHasFallbackBuffer ||
                     decoder.FallbackBuffer.Remaining == 0,
                     "[ASCIICodePageEncoding.GetCharCount]Expected empty fallback buffer");
             }
@@ -799,7 +773,7 @@ namespace System.Text
             else
             {
                 fallback = decoder.Fallback as DecoderReplacementFallback;
-                Debug.Assert(!decoder.m_throwOnOverflow || !decoder.InternalHasFallbackBuffer ||
+                Debug.Assert(!decoder._throwOnOverflow || !decoder.InternalHasFallbackBuffer ||
                     decoder.FallbackBuffer.Remaining == 0,
                     "[ASCIICodePageEncoding.GetChars]Expected empty fallback buffer");
             }
@@ -832,7 +806,7 @@ namespace System.Text
 
                 // bytes & chars used are the same
                 if (decoder != null)
-                    decoder.m_bytesUsed = (int)(bytes - byteStart);
+                    decoder._bytesUsed = (int)(bytes - byteStart);
                 return (int)(chars - charStart);
             }
 
@@ -898,7 +872,7 @@ namespace System.Text
 
             // Might have had decoder fallback stuff.
             if (decoder != null)
-                decoder.m_bytesUsed = (int)(bytes - byteStart);
+                decoder._bytesUsed = (int)(bytes - byteStart);
 
             // Expect Empty fallback buffer for GetChars
             Debug.Assert(fallbackBuffer == null || fallbackBuffer.Remaining == 0,
@@ -913,7 +887,6 @@ namespace System.Text
             if (charCount < 0)
                 throw new ArgumentOutOfRangeException(nameof(charCount),
                      SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             // Characters would be # of characters + 1 in case high surrogate is ? * max fallback
             long byteCount = (long)charCount + 1;
@@ -934,7 +907,6 @@ namespace System.Text
             if (byteCount < 0)
                 throw new ArgumentOutOfRangeException(nameof(byteCount),
                      SR.ArgumentOutOfRange_NeedNonNegNum);
-            Contract.EndContractBlock();
 
             // Just return length, SBCS stay the same length because they don't map to surrogate
             long charCount = (long)byteCount;

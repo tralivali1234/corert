@@ -3,7 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 //
-//  System.Private.CoreLib cannot directly interop with WinRT because the interop DLL depends on System.Private.CoreLib which causes circular dependancy. 
+//  System.Private.CoreLib cannot directly interop with WinRT because the interop DLL depends on System.Private.CoreLib which causes circular dependency. 
 //  To enable System.Private.CoreLib to call WinRT, we do have another assembly System.Private.WinRTInterop.CoreLib.dll which does the interop with WinRT 
 //  and to allow System.Private.CoreLib to call System.Private.WinRTInterop.CoreLib we do the following trick
 //      o   RmtGen tool will inject code WinRT.Initialize() to the app before the app Main method while building it 
@@ -57,44 +57,6 @@ namespace Internal.Runtime.Augments
         private const string c_EarlyCallingExceptionMessage = "WinRT Interop has not been initialized yet. If trying to access something in a static variable initialization or static constructor try to do this work lazily on first use instead.";
     }
 
-    public enum CausalityRelation
-    {
-        AssignDelegate = 0,
-        Join = 1,
-        Choice = 2,
-        Cancel = 3,
-        Error = 4,
-    }
-
-    public enum CausalitySource
-    {
-        Application = 0,
-        Library = 1,
-        System = 2,
-    }
-
-    public enum CausalityTraceLevel
-    {
-        Required = 0,
-        Important = 1,
-        Verbose = 2,
-    }
-
-    public enum AsyncStatus
-    {
-        Started = 0,
-        Completed = 1,
-        Canceled = 2,
-        Error = 3,
-    }
-
-    public enum CausalitySynchronousWork
-    {
-        CompletionNotification = 0,
-        ProgressNotification = 1,
-        Execution = 2,
-    }
-
     [CLSCompliant(false)]
     public abstract class WinRTInteropCallbacks
     {
@@ -105,11 +67,8 @@ namespace Internal.Runtime.Augments
         public abstract string GetRegionDisplayName(string isoCountryCode);
         public abstract Object GetUserDefaultCulture();
         public abstract void SetGlobalDefaultCulture(Object culture);
-        public abstract Object GetCurrentCoreDispatcher();
-        public abstract void PostToCoreDispatcher(Object dispatcher, Action<object> action, object state);
-        public abstract Object GetResourceMap(string subtreeName);
-        public abstract string GetResourceString(object resourceMap, string resourceName, string languageName);
-        public abstract string GetResourceString(object resourceMap, string resourceName, string languageName, string neutralResourcesCulture);
+        public abstract Object GetCurrentWinRTDispatcher();
+        public abstract void PostToWinRTDispatcher(Object dispatcher, Action<object> action, object state);
         public abstract bool IsAppxModel();
         public abstract bool ReportUnhandledError(Exception ex);
         public abstract void SetCOMWeakReferenceTarget(object weakReference, object target);

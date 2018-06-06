@@ -39,6 +39,9 @@ namespace System.Reflection.Runtime.TypeInfos
         protected sealed override bool IsPointerImpl() => false;
         public sealed override bool IsConstructedGenericType => true;
         public sealed override bool IsGenericParameter => false;
+        public sealed override bool IsGenericTypeParameter => false;
+        public sealed override bool IsGenericMethodParameter => false;
+        public sealed override bool IsByRefLike => GenericTypeDefinitionTypeInfo.IsByRefLike;
 
         //
         // Implements IKeyedItem.PrepareKey.
@@ -147,6 +150,11 @@ namespace System.Reflection.Runtime.TypeInfos
             }
         }
 
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            return GenericTypeDefinitionTypeInfo.HasSameMetadataDefinitionAs(other);
+        }
+
         public sealed override string Namespace
         {
             get
@@ -239,8 +247,7 @@ namespace System.Reflection.Runtime.TypeInfos
             get
             {
                 RuntimeTypeInfo genericTypeDefinition = this.GenericTypeDefinitionTypeInfo;
-                RuntimeNamedTypeInfo genericTypeDefinitionNamedTypeInfo = genericTypeDefinition as RuntimeNamedTypeInfo;
-                if (genericTypeDefinitionNamedTypeInfo == null)
+                if (!(genericTypeDefinition is RuntimeNamedTypeInfo genericTypeDefinitionNamedTypeInfo))
                     throw ReflectionCoreExecution.ExecutionDomain.CreateMissingMetadataException(genericTypeDefinition);
                 return genericTypeDefinitionNamedTypeInfo;
             }

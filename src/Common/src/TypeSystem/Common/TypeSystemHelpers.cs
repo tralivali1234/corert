@@ -12,7 +12,7 @@ namespace Internal.TypeSystem
     {
         public static bool IsWellKnownType(this TypeDesc type, WellKnownType wellKnownType)
         {
-            return type == type.Context.GetWellKnownType(wellKnownType);
+            return type == type.Context.GetWellKnownType(wellKnownType, false);
         }
 
         public static InstantiatedType MakeInstantiatedType(this MetadataType typeDef, Instantiation instantiation)
@@ -70,7 +70,7 @@ namespace Internal.TypeSystem
         {
             if (type.IsValueType)
             {
-                return ((MetadataType)type).InstanceFieldSize;
+                return ((DefType)type).InstanceFieldSize;
             }
             else
             {
@@ -153,7 +153,7 @@ namespace Internal.TypeSystem
                 targetOrBase = targetOrBase.BaseType;
             } while (targetOrBase != null);
 
-            Debug.Assert(false, "method has no related type in the type hierarchy of type");
+            Debug.Fail("method has no related type in the type hierarchy of type");
             return null;
         }
 
@@ -269,6 +269,11 @@ namespace Internal.TypeSystem
         public static MethodDesc ResolveInterfaceMethodToVirtualMethodOnType(this TypeDesc type, MethodDesc interfaceMethod)
         {
             return type.Context.GetVirtualMethodAlgorithmForType(type).ResolveInterfaceMethodToVirtualMethodOnType(interfaceMethod, type);
+        }
+
+        public static MethodDesc ResolveVariantInterfaceMethodToVirtualMethodOnType(this TypeDesc type, MethodDesc interfaceMethod)
+        {
+            return type.Context.GetVirtualMethodAlgorithmForType(type).ResolveVariantInterfaceMethodToVirtualMethodOnType(interfaceMethod, type);
         }
 
         /// <summary>

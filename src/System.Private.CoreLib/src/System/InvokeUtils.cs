@@ -10,9 +10,11 @@ using System.Diagnostics;
 
 using Internal.Reflection.Core.NonPortable;
 using Internal.Runtime.Augments;
+using Internal.Runtime.CompilerServices;
 
 namespace System
 {
+    [System.Runtime.CompilerServices.ReflectionBlocked]
     [System.Runtime.CompilerServices.DependencyReductionRoot]
     public static class InvokeUtils
     {
@@ -31,7 +33,7 @@ namespace System
         //
         //    null converted to default(T) (this is important when T is a valuetype.)
         //
-        // There is also another transform of T -> Nullable<T>. This method acknowleges that rule but does not actually transform the T.
+        // There is also another transform of T -> Nullable<T>. This method acknowledges that rule but does not actually transform the T.
         // Rather, the transformation happens naturally when the caller unboxes the value to its final destination.
         //
         // This method is targeted by the Delegate ILTransformer.
@@ -56,7 +58,11 @@ namespace System
             if (srcObject == null)
             {
                 // null -> default(T) 
-                if (dstEEType.IsValueType && !dstEEType.IsNullable)
+                if (dstEEType.IsPointer)
+                {
+                    return default(IntPtr);
+                }
+                else if (dstEEType.IsValueType && !dstEEType.IsNullable)
                 {
                     if (semantics == CheckArgumentSemantics.SetFieldDirect)
                         throw CreateChangeTypeException(CommonRuntimeTypes.Object.TypeHandle.ToEETypePtr(), dstEEType, semantics);
@@ -123,16 +129,22 @@ namespace System
                 return CreateChangeTypeException(srcEEType, dstEEType, semantics);
             }
 
-            if (!((srcEEType.IsEnum || srcEEType.IsPrimitive) && (dstEEType.IsEnum || dstEEType.IsPrimitive || dstEEType.IsPointer)))
+            if (dstEEType.IsPointer)
+            {
+                Exception exception = ConvertPointerIfPossible(srcObject, srcEEType, dstEEType, semantics, out IntPtr dstIntPtr);
+                if (exception != null)
+                {
+                    dstObject = null;
+                    return exception;
+                }
+                dstObject = dstIntPtr;
+                return null;
+            }
+
+            if (!(srcEEType.IsPrimitive && dstEEType.IsPrimitive))
             {
                 dstObject = null;
                 return CreateChangeTypeException(srcEEType, dstEEType, semantics);
-            }
-
-            if (dstEEType.IsPointer)
-            {
-                dstObject = null;
-                return new NotImplementedException(); //TODO: https://github.com/dotnet/corert/issues/2113
             }
 
             RuntimeImports.RhCorElementType dstCorElementType = dstEEType.CorElementType;
@@ -145,43 +157,53 @@ namespace System
             switch (dstCorElementType)
             {
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_BOOLEAN:
-                    dstObject = Convert.ToBoolean(srcObject);
+                    bool boolValue = Convert.ToBoolean(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, boolValue ? 1 : 0) : boolValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_CHAR:
-                    dstObject = Convert.ToChar(srcObject);
+                    char charValue = Convert.ToChar(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, charValue) : charValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_I1:
-                    dstObject = Convert.ToSByte(srcObject);
+                    sbyte sbyteValue = Convert.ToSByte(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, sbyteValue) : sbyteValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_I2:
-                    dstObject = Convert.ToInt16(srcObject);
+                    short shortValue = Convert.ToInt16(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, shortValue) : shortValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_I4:
-                    dstObject = Convert.ToInt32(srcObject);
+                    int intValue = Convert.ToInt32(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, intValue) : intValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_I8:
-                    dstObject = Convert.ToInt64(srcObject);
+                    long longValue = Convert.ToInt64(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, longValue) : longValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_U1:
-                    dstObject = Convert.ToByte(srcObject);
+                    byte byteValue = Convert.ToByte(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, byteValue) : byteValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_U2:
-                    dstObject = Convert.ToUInt16(srcObject);
+                    ushort ushortValue = Convert.ToUInt16(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, ushortValue) : ushortValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_U4:
-                    dstObject = Convert.ToUInt32(srcObject);
+                    uint uintValue = Convert.ToUInt32(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, uintValue) : uintValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_U8:
-                    dstObject = Convert.ToUInt64(srcObject);
+                    ulong ulongValue = Convert.ToUInt64(srcObject);
+                    dstObject = dstEEType.IsEnum ? Enum.ToObject(dstEEType, (long)ulongValue) : ulongValue;
                     break;
 
                 case RuntimeImports.RhCorElementType.ELEMENT_TYPE_R4:
@@ -207,19 +229,34 @@ namespace System
                     break;
 
                 default:
-                    Debug.Assert(false, "Unexpected CorElementType: " + dstCorElementType + ": Not a valid widening target.");
+                    Debug.Fail("Unexpected CorElementType: " + dstCorElementType + ": Not a valid widening target.");
                     dstObject = null;
                     return CreateChangeTypeException(srcEEType, dstEEType, semantics);
             }
 
-            if (dstEEType.IsEnum)
-            {
-                Type dstType = ReflectionCoreNonPortable.GetRuntimeTypeForEEType(dstEEType);
-                dstObject = Enum.ToObject(dstType, dstObject);
-            }
-
             Debug.Assert(dstObject.EETypePtr == dstEEType);
             return null;
+        }
+
+        private static Exception ConvertPointerIfPossible(object srcObject, EETypePtr srcEEType, EETypePtr dstEEType, CheckArgumentSemantics semantics, out IntPtr dstIntPtr)
+        {
+            if (srcObject is IntPtr srcIntPtr)
+            {
+                dstIntPtr = srcIntPtr;
+                return null;
+            }
+
+            if (srcObject is Pointer srcPointer)
+            {
+                if (dstEEType == typeof(void*).TypeHandle.ToEETypePtr() || RuntimeImports.AreTypesAssignable(pSourceType: srcPointer.GetPointerType().TypeHandle.ToEETypePtr(), pTargetType: dstEEType))
+                {
+                    dstIntPtr = srcPointer.GetPointerValue();
+                    return null;
+                }
+            }
+
+            dstIntPtr = IntPtr.Zero;
+            return CreateChangeTypeException(srcEEType, dstEEType, semantics);
         }
 
         private static Exception CreateChangeTypeException(EETypePtr srcEEType, EETypePtr dstEEType, CheckArgumentSemantics semantics)
@@ -232,7 +269,7 @@ namespace System
                 case CheckArgumentSemantics.ArraySet:
                     return CreateChangeTypeInvalidCastException(srcEEType, dstEEType);
                 default:
-                    Debug.Assert(false, "Unexpected CheckArgumentSemantics value: " + semantics);
+                    Debug.Fail("Unexpected CheckArgumentSemantics value: " + semantics);
                     throw new InvalidOperationException();
             }
         }
@@ -338,6 +375,7 @@ namespace System
             object targetMethodOrDelegate,
             object[] parameters,
             BinderBundle binderBundle,
+            bool wrapInTargetInvocationException,
             bool invokeMethodHelperIsThisCall = true,
             bool methodToCallIsThisCall = true)
         {
@@ -346,7 +384,6 @@ namespace System
             // isn't always the exact type (byref stripped off, enums converted to int, etc.)
             Debug.Assert(!(binderBundle != null && !(targetMethodOrDelegate is MethodBase)), "The only callers that can pass a custom binder are those servicing MethodBase.Invoke() apis.");
 
-            bool fDontWrapInTargetInvocationException = false;
             bool parametersNeedCopyBack = false;
             ArgSetupState argSetupState = default(ArgSetupState);
 
@@ -404,6 +441,10 @@ namespace System
 
                     return result;
                 }
+                catch (Exception e) when (wrapInTargetInvocationException && argSetupState.fComplete)
+                {
+                    throw new TargetInvocationException(e);
+                }
                 finally
                 {
                     if (parametersNeedCopyBack)
@@ -411,11 +452,7 @@ namespace System
                         Array.Copy(s_parameters, parameters, parameters.Length);
                     }
 
-                    if (!argSetupState.fComplete)
-                    {
-                        fDontWrapInTargetInvocationException = true;
-                    }
-                    else
+                    if (argSetupState.fComplete)
                     {
                         // Nullable objects can't take advantage of the ability to update the boxed value on the heap directly, so perform
                         // an update of the parameters array now.
@@ -430,17 +467,6 @@ namespace System
                             }
                         }
                     }
-                }
-            }
-            catch (Exception e)
-            {
-                if (fDontWrapInTargetInvocationException)
-                {
-                    throw;
-                }
-                else
-                {
-                    throw new System.Reflection.TargetInvocationException(e);
                 }
             }
             finally
@@ -488,7 +514,7 @@ namespace System
                 ref ArgSetupState argSetupState)
             {
                 // This method is implemented elsewhere in the toolchain
-                throw new PlatformNotSupportedException();
+                throw new NotSupportedException();
             }
 
             [DebuggerStepThrough]
@@ -500,7 +526,7 @@ namespace System
                 bool isTargetThisCall)
             {
                 // This method is implemented elsewhere in the toolchain
-                throw new PlatformNotSupportedException();
+                throw new NotSupportedException();
             }
 
             [DebuggerStepThrough]
@@ -513,7 +539,7 @@ namespace System
                 bool isTargetThisCall)
             {
                 // This method is implemented elsewhere in the toolchain
-                throw new PlatformNotSupportedException();
+                throw new NotSupportedException();
             }
         }
 
@@ -708,6 +734,15 @@ namespace System
             return finalObjectToReturn;
         }
 
+        internal static object DynamicInvokeUnmanagedPointerReturn(out DynamicInvokeParamLookupType paramLookupType, object boxedPointerType, int index, RuntimeTypeHandle type, DynamicInvokeParamType paramType)
+        {
+            object finalObjectToReturn = boxedPointerType;
+
+            Debug.Assert(finalObjectToReturn is IntPtr);
+            paramLookupType = DynamicInvokeParamLookupType.ValuetypeObjectReturned;
+            return finalObjectToReturn;
+        }
+
         public static object DynamicInvokeParamHelperCore(RuntimeTypeHandle type, out DynamicInvokeParamLookupType paramLookupType, out int index, DynamicInvokeParamType paramType)
         {
             index = s_curIndex++;
@@ -771,6 +806,11 @@ namespace System
                     System.Diagnostics.Debug.Assert(s_parameters[index] == null || Object.ReferenceEquals(incomingParam, s_parameters[index]));
                 }
                 return DynamicInvokeBoxedValuetypeReturn(out paramLookupType, incomingParam, index, type, paramType);
+            }
+            else if (type.ToEETypePtr().IsPointer)
+            {
+                incomingParam = InvokeUtils.CheckArgument(incomingParam, type.ToEETypePtr(), InvokeUtils.CheckArgumentSemantics.DynamicInvoke, s_binderBundle, s_getExactTypeForCustomBinder);
+                return DynamicInvokeUnmanagedPointerReturn(out paramLookupType, incomingParam, index, type, paramType);
             }
             else
             {

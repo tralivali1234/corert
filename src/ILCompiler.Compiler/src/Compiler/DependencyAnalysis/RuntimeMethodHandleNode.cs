@@ -35,20 +35,34 @@ namespace ILCompiler.DependencyAnalysis
         }
         public int Offset => 0;
         protected override string GetName(NodeFactory factory) => this.GetMangledName(factory.NameMangler);
-        public override ObjectNodeSection Section => ObjectNodeSection.ReadOnlyDataSection;
         public override bool IsShareable => false;
         public override bool StaticDependenciesAreComputed => true;
 
+        public override ObjectNodeSection Section
+        {
+            get
+            {
+                if (_targetMethod.Context.Target.IsWindows)
+                    return ObjectNodeSection.ReadOnlyDataSection;
+                else
+                    return ObjectNodeSection.DataSection;
+            }
+        }
+
         protected override DependencyList ComputeNonRelocationBasedDependencies(NodeFactory factory)
         {
+            DependencyList dependencies = null;
+
             if (!_targetMethod.IsMethodDefinition && !_targetMethod.OwningType.IsGenericDefinition
                 && _targetMethod.HasInstantiation && _targetMethod.IsVirtual)
             {
-                DependencyList dependencies = new DependencyList();
-                dependencies.Add(new DependencyListEntry(factory.GVMDependencies(_targetMethod), "GVM dependencies for runtime method handle"));
-                return dependencies;
+                dependencies = dependencies ?? new DependencyList();
+                dependencies.Add(factory.GVMDependencies(_targetMethod), "GVM dependencies for runtime method handle");
             }
-            return null;
+
+            factory.MetadataManager.GetDependenciesDueToLdToken(ref dependencies, factory, _targetMethod);
+
+            return dependencies;
         }
 
         private static Utf8String s_NativeLayoutSignaturePrefix = new Utf8String("__RMHSignature_");
@@ -64,6 +78,13 @@ namespace ILCompiler.DependencyAnalysis
             objData.EmitPointerReloc(factory.NativeLayout.NativeLayoutSignature(ldtokenSigNode, s_NativeLayoutSignaturePrefix, _targetMethod));
 
             return objData.ToObjectData();
+        }
+
+        protected internal override int ClassCode => -274400625;
+
+        protected internal override int CompareToImpl(SortableDependencyNode other, CompilerComparer comparer)
+        {
+            return comparer.Compare(_targetMethod, ((RuntimeMethodHandleNode)other)._targetMethod);
         }
     }
 }

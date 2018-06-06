@@ -2,11 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
-using System.Diagnostics.Contracts;
 
 namespace System.Globalization
 {
-    [Serializable]
     public abstract class EastAsianLunisolarCalendar : Calendar
     {
         internal const int LeapMonth = 0;
@@ -63,12 +61,11 @@ namespace System.Globalization
                                 nameof(sexagenaryYear),
                                 SR.Format(SR.ArgumentOutOfRange_Range, 1, 60));
             }
-            Contract.EndContractBlock();
 
             return ((sexagenaryYear - 1) % 10) + 1;
         }
 
-        // Return the Terrestial Branch from the the 60-year cycle.
+        // Return the Terrestial Branch from the 60-year cycle.
         // The returned value is from 1 ~ 12.
         //
 
@@ -80,7 +77,6 @@ namespace System.Globalization
                                 nameof(sexagenaryYear),
                                 SR.Format(SR.ArgumentOutOfRange_Range, 1, 60));
             }
-            Contract.EndContractBlock();
 
             return ((sexagenaryYear - 1) % 12) + 1;
         }
@@ -166,10 +162,9 @@ namespace System.Globalization
             {
                 throw new ArgumentOutOfRangeException(
                                 "time",
-                                String.Format(CultureInfo.InvariantCulture, SR.ArgumentOutOfRange_CalendarRange,
+                                string.Format(CultureInfo.InvariantCulture, SR.ArgumentOutOfRange_CalendarRange,
                                 MinSupportedDateTime, MaxSupportedDateTime));
             }
-            Contract.EndContractBlock();
         }
 
         internal void CheckEraRange(int era)
@@ -441,7 +436,6 @@ namespace System.Globalization
                             nameof(months),
                             SR.Format(SR.ArgumentOutOfRange_Range, -120000, 120000));
             }
-            Contract.EndContractBlock();
 
             CheckTicksRange(time.Ticks);
 
@@ -700,7 +694,6 @@ namespace System.Globalization
                 throw new ArgumentOutOfRangeException(nameof(year),
                     SR.ArgumentOutOfRange_NeedNonNegNum);
             }
-            Contract.EndContractBlock();
 
             year = base.ToFourDigitYear(year);
             CheckYearRange(year, CurrentEra);

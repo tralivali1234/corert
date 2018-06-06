@@ -99,7 +99,7 @@ namespace Internal.Runtime.Augments
             // Throw an ApplicationException for compatibility with CoreCLR. First save the error code.
             int errorCode = Marshal.GetLastWin32Error();
             var ex = new ApplicationException();
-            ex.SetErrorCode(errorCode);
+            ex.HResult = errorCode;
             throw ex;
         }
 
@@ -223,7 +223,7 @@ namespace Internal.Runtime.Augments
                 }
                 else
                 {
-                    result = WaitHandle.WaitForSingleObject(waitHandle.DangerousGetHandle(), millisecondsTimeout);
+                    result = WaitHandle.WaitForSingleObject(waitHandle.DangerousGetHandle(), millisecondsTimeout, true);
                 }
 
                 return result == (int)Interop.Constants.WaitObject0;
@@ -274,7 +274,7 @@ namespace Internal.Runtime.Augments
         }
 
         /// <summary>
-        /// This an entry point for managed threads created by applicatoin
+        /// This is an entry point for managed threads created by application
         /// </summary>
         [NativeCallable(CallingConvention = CallingConvention.StdCall)]
         private static uint ThreadEntryPoint(IntPtr parameter)
@@ -283,10 +283,26 @@ namespace Internal.Runtime.Augments
             return 0;
         }
 
-        public ApartmentState GetApartmentState() { throw null; }
-        public bool TrySetApartmentState(ApartmentState state) { throw null; }
-        public void DisableComObjectEagerCleanup() { throw null; }
-        public void Interrupt() { throw null; }
+        public ApartmentState GetApartmentState()
+        {
+            if (this != CurrentThread)
+                throw new InvalidOperationException(SR.Thread_Operation_RequiresCurrentThread);
+
+            switch (GetCurrentApartmentType())
+            {
+                case ApartmentType.STA:
+                    return ApartmentState.STA;
+                case ApartmentType.MTA:
+                    return ApartmentState.MTA;
+                default:
+                    return ApartmentState.Unknown;
+            }
+        }
+
+        // TODO: https://github.com/dotnet/corefx/issues/20766
+        public bool TrySetApartmentState(ApartmentState state) { throw new PlatformNotSupportedException(); }
+        public void DisableComObjectEagerCleanup() { }
+        public void Interrupt() { throw new PlatformNotSupportedException(); }
 
         internal static void UninterruptibleSleep0()
         {
@@ -324,45 +340,45 @@ namespace Internal.Runtime.Augments
             if (currentThreadType != ApartmentType.Unknown)
                 return currentThreadType;
 
-            Interop._APTTYPE aptType;
-            Interop._APTTYPEQUALIFIER aptTypeQualifier;
-            int result = Interop.mincore.CoGetApartmentType(out aptType, out aptTypeQualifier);
+            Interop.APTTYPE aptType;
+            Interop.APTTYPEQUALIFIER aptTypeQualifier;
+            int result = Interop.Ole32.CoGetApartmentType(out aptType, out aptTypeQualifier);
 
             ApartmentType type = ApartmentType.Unknown;
 
-            switch ((Interop.Constants)result)
+            switch (result)
             {
-                case Interop.Constants.CoENotInitialized:
+                case HResults.CO_E_NOTINITIALIZED:
                     type = ApartmentType.None;
                     break;
 
-                case Interop.Constants.SOk:
+                case HResults.S_OK:
                     switch (aptType)
                     {
-                        case Interop._APTTYPE.APTTYPE_STA:
-                        case Interop._APTTYPE.APTTYPE_MAINSTA:
+                        case Interop.APTTYPE.APTTYPE_STA:
+                        case Interop.APTTYPE.APTTYPE_MAINSTA:
                             type = ApartmentType.STA;
                             break;
 
-                        case Interop._APTTYPE.APTTYPE_MTA:
+                        case Interop.APTTYPE.APTTYPE_MTA:
                             type = ApartmentType.MTA;
                             break;
 
-                        case Interop._APTTYPE.APTTYPE_NA:
+                        case Interop.APTTYPE.APTTYPE_NA:
                             switch (aptTypeQualifier)
                             {
-                                case Interop._APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_MTA:
-                                case Interop._APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_IMPLICIT_MTA:
+                                case Interop.APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_MTA:
+                                case Interop.APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_IMPLICIT_MTA:
                                     type = ApartmentType.MTA;
                                     break;
 
-                                case Interop._APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_STA:
-                                case Interop._APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_MAINSTA:
+                                case Interop.APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_STA:
+                                case Interop.APTTYPEQUALIFIER.APTTYPEQUALIFIER_NA_ON_MAINSTA:
                                     type = ApartmentType.STA;
                                     break;
 
                                 default:
-                                    Debug.Assert(false, "NA apartment without NA qualifier");
+                                    Debug.Fail("NA apartment without NA qualifier");
                                     break;
                             }
                             break;
@@ -370,7 +386,7 @@ namespace Internal.Runtime.Augments
                     break;
 
                 default:
-                    Debug.Assert(false, "bad return from CoGetApartmentType");
+                    Debug.Fail("bad return from CoGetApartmentType");
                     break;
             }
 
@@ -386,5 +402,7 @@ namespace Internal.Runtime.Augments
             STA,
             MTA
         }
+
+        private static int ComputeCurrentProcessorId() => (int)Interop.mincore.GetCurrentProcessorNumber();
     }
 }

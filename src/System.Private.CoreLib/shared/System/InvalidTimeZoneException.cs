@@ -7,6 +7,7 @@ using System.Runtime.Serialization;
 namespace System
 {
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("System.Core, Version=3.5.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
     public class InvalidTimeZoneException : Exception
     {
         public InvalidTimeZoneException()
@@ -23,6 +24,8 @@ namespace System
         {
         }
 
-        protected InvalidTimeZoneException(SerializationInfo info, StreamingContext context) : base(info, context) { }
+        protected InvalidTimeZoneException(SerializationInfo info, StreamingContext context) : base(info, context)
+        {
+        }
     }
 }

@@ -15,13 +15,15 @@ namespace ILCompiler.DependencyAnalysis
     /// <summary>
     /// Represents a method that doesn't have a body, but we need to track it because it's reflectable.
     /// </summary>
-    internal class ReflectableMethodNode : DependencyNodeCore<NodeFactory>
+    public class ReflectableMethodNode : DependencyNodeCore<NodeFactory>
     {
         private MethodDesc _method;
 
         public ReflectableMethodNode(MethodDesc method)
         {
             Debug.Assert(method.IsAbstract || method.IsPInvoke);
+            Debug.Assert(!method.IsCanonicalMethod(CanonicalFormKind.Any) ||
+                method.GetCanonMethodTarget(CanonicalFormKind.Specific) == method);
             _method = method;
         }
 
@@ -30,7 +32,7 @@ namespace ILCompiler.DependencyAnalysis
         public override IEnumerable<DependencyListEntry> GetStaticDependencies(NodeFactory factory)
         {
             DependencyList dependencies = null;
-            CodeBasedDependencyAlgorithm.AddDependenciesDueToReflectability(ref dependencies, factory, _method);
+            factory.MetadataManager.GetDependenciesDueToReflectability(ref dependencies, factory, _method);
             return dependencies;
         }
         protected override string GetName(NodeFactory factory)

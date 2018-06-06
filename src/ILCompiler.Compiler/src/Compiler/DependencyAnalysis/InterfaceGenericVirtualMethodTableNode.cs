@@ -51,7 +51,10 @@ namespace ILCompiler.DependencyAnalysis
         public static void GetGenericVirtualMethodImplementationDependencies(ref DependencyList dependencies, NodeFactory factory, MethodDesc callingMethod, TypeDesc implementationType, MethodDesc implementationMethod)
         {
             Debug.Assert(callingMethod.OwningType.IsInterface);
-            
+
+            if (!factory.MetadataManager.SupportsReflection)
+                return;
+
             // Compute the open method signatures
             MethodDesc openCallingMethod = callingMethod.GetTypicalMethodDefinition();
             MethodDesc openImplementationMethod = implementationMethod.GetTypicalMethodDefinition();
@@ -209,5 +212,8 @@ namespace ILCompiler.DependencyAnalysis
 
             return new ObjectData(streamBytes, Array.Empty<Relocation>(), 1, new ISymbolDefinitionNode[] { this, _endSymbol });
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.InterfaceGenericVirtualMethodTableNode;
     }
 }

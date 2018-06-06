@@ -65,24 +65,11 @@ namespace Internal.TypeSystem
 
             flags |= TypeFlags.HasGenericVarianceComputed;
 
+            flags |= TypeFlags.HasFinalizerComputed;
+
+            flags |= TypeFlags.AttributeCacheComputed;
+
             return flags;
-        }
-
-        public override string ToString()
-        {
-            StringBuilder sb = new StringBuilder();
-            sb.Append(_signature.ReturnType);
-
-            sb.Append(" *(");
-            for (int i = 0; i < _signature.Length; i++)
-            {
-                if (i > 0)
-                    sb.Append(", ");
-                sb.Append(_signature[i]);
-            }
-            sb.Append(')');
-
-            return sb.ToString();
         }
     }
 }

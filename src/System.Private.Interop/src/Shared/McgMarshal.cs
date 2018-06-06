@@ -4,8 +4,12 @@
 // ----------------------------------------------------------------------------------
 // Interop library code
 //
-// Marshalling helpers used by MCG
-//
+// Marshalling helpers used by MCG generated stub
+// McgMarshal covers full marshalling surface area and is entrypoint for all marshalling support.
+// In long term:
+//  1. MCG generated code should  call McgMarshal to do marshalling
+//  2. Public Marhshal API should call McgMarshal to do marshalling
+
 // NOTE:
 //   These source code are being published to InternalAPIs and consumed by RH builds
 //   Use PublishInteropAPI.bat to keep the InternalAPI copies in sync
@@ -22,7 +26,6 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Text;
 using System.Runtime;
-using System.Diagnostics.Contracts;
 using System.Runtime.CompilerServices;
 using Internal.NativeFormat;
 
@@ -49,6 +52,11 @@ namespace System.Runtime.InteropServices
             PInvokeMarshal.SaveLastWin32Error();
         }
 
+        public static void ClearLastWin32Error()
+        {
+            PInvokeMarshal.ClearLastWin32Error();
+        }
+
         public static bool GuidEquals(ref Guid left, ref Guid right)
         {
             return InteropExtensions.GuidEquals(ref left, ref right);
@@ -73,13 +81,24 @@ namespace System.Runtime.InteropServices
 #endif
         }
 
-        public static bool IsCOMObject(Type type)
+        /// <summary>
+        /// Return true if the type is __COM or derived from __COM. False otherwise
+        /// </summary>
+        public static bool IsComObject(Type type)
         {
 #if RHTESTCL
             return false;
 #else
-            return type.GetTypeInfo().IsSubclassOf(typeof(__ComObject));
+            return type == typeof(__ComObject) || type.GetTypeInfo().IsSubclassOf(typeof(__ComObject));
 #endif
+        }
+
+        /// <summary>
+        /// Return true if the object is a RCW. False otherwise
+        /// </summary>
+        internal static bool IsComObject(object obj)
+        {
+            return (obj is __ComObject);
         }
 
         public static T FastCast<T>(object value) where T : class
@@ -128,7 +147,7 @@ namespace System.Runtime.InteropServices
         }
 
 #if ENABLE_MIN_WINRT
-        public static unsafe void SetExceptionErrorCode(Exception exception, int errorCode)
+        public static unsafe void SetExceptionErrorCode(Exception exception, int errorCode)	
         {
             InteropExtensions.SetExceptionErrorCode(exception, errorCode);
         }
@@ -169,6 +188,15 @@ namespace System.Runtime.InteropServices
 #endif
         }
 
+        internal static Type TypeNameToType(string nativeTypeName, int nativeTypeKind)
+        {
+#if ENABLE_WINRT
+            return McgTypeHelpers.TypeNameToType(nativeTypeName, nativeTypeKind, checkTypeKind: false);
+#else
+            throw new NotSupportedException("TypeNameToType");
+#endif
+        }
+
         public static unsafe void TypeToTypeName(
             Type type,
             out HSTRING nativeTypeName,
@@ -178,6 +206,24 @@ namespace System.Runtime.InteropServices
             McgTypeHelpers.TypeToTypeName(type, out nativeTypeName, out nativeTypeKind);
 #else
             throw new NotSupportedException("TypeToTypeName");
+#endif
+        }
+
+        /// <summary>
+        /// Fetch type name
+        /// </summary>
+        /// <param name="typeHandle">type</param>
+        /// <returns>type name</returns>
+        internal static string TypeToTypeName(RuntimeTypeHandle typeHandle, out int nativeTypeKind)
+        {
+#if ENABLE_WINRT
+            TypeKind typekind;
+            string typeName;
+            McgTypeHelpers.TypeToTypeName(typeHandle, out typeName, out typekind);
+            nativeTypeKind = (int)typekind;
+            return typeName;
+#else
+           throw new NotSupportedException("TypeToTypeName");
 #endif
         }
 
@@ -322,9 +368,152 @@ namespace System.Runtime.InteropServices
         {
             return PInvokeMarshal.ByValAnsiStringToString(pchBuffer, charCount);
         }
+
+        /// <summary>
+        /// CoTaskMemAlloc + ZeroMemory
+        /// @TODO - we can probably optimize the zero memory part later
+        /// </summary>
+        public unsafe static void* CoTaskMemAllocAndZeroMemory(IntPtr size)
+        {
+            void *ptr = (void*)PInvokeMarshal.CoTaskMemAlloc(new UIntPtr((void*)size));
+            if (ptr == null)
+                return ptr;
+
+            byte *pByte = (byte*)ptr;
+            long lSize = size.ToInt64();
+            while (lSize > 0)
+            {
+                lSize--;
+                (*pByte++) = 0;
+            }
+
+            return ptr;
+        }
+
+        /// <summary>
+        /// Free allocated memory. The allocated memory should be allocated by CoTaskMemAlloc
+        /// </summary>
+        public static void SafeCoTaskMemFree(IntPtr allocatedMemory)
+        {
+            if (allocatedMemory != IntPtr.Zero)
+                PInvokeMarshal.CoTaskMemFree(allocatedMemory);
+        }
+
+        /// <summary>
+        /// Free allocated memory. The allocated memory should be allocated by CoTaskMemAlloc
+        /// </summary>
+        public static unsafe void SafeCoTaskMemFree(void* pv)
+        {
+            if (pv != null)
+                PInvokeMarshal.CoTaskMemFree(new IntPtr(pv));
+        }
+
+        /// <summary>
+        /// Allocate a buffer with enough size to store the unicode characters saved in source
+        /// Buffer is allocated with CoTaskMemAlloc
+        /// </summary>
+        public unsafe static void *AllocUnicodeBuffer(string source)
+        {
+            if (source == null)
+                return null;
+
+            int byteLen = checked((source.Length + 1) * 2);
+
+            char* pBuf = (char*)PInvokeMarshal.CoTaskMemAlloc(new UIntPtr((uint)byteLen));
+            if (pBuf == null)
+                throw new System.OutOfMemoryException();
+
+            return pBuf;
+        }
+
+        /// <summary>
+        /// Copy unicode characters in source into dest, and terminating with null
+        /// </summary>
+        public unsafe static void CopyUnicodeString(string source, void* _dest)
+        {
+            if (source == null)
+                return;
+
+            char* dest = (char *)_dest;
+            fixed (char* pSource = source)
+            {
+                int len = source.Length;
+                char* src = pSource;
+
+                // Copy characters one by one, including the null terminator
+                for (int i = 0; i <= len; ++i)
+                {
+                    *(dest++) = *(src++);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Convert String to BSTR 
+        /// </summary>
+        public unsafe static ushort* ConvertStringToBSTR(
+                ushort* ptrToFirstCharInBSTR,
+                string strManaged)
+        {
+            if (strManaged == null)
+                return null;
+
+            if (ptrToFirstCharInBSTR == null)
+            {
+                // If caller don't provided buffer, allocate the buffer and create string using SysAllocStringLen
+                fixed (char* ch = strManaged)
+                {
+                    return (ushort*) ExternalInterop.SysAllocStringLen(ch, (uint)strManaged.Length);
+                }
+            }
+            else 
+            {
+                // If caller provided a buffer, construct the BSTR manually. 
+
+                // set length
+                *((int*)ptrToFirstCharInBSTR - 1) = checked(strManaged.Length * 2);
+
+                // copy characters from the managed string
+                fixed (char* ch = strManaged)
+                {
+                    InteropExtensions.Memcpy(
+                        (System.IntPtr)ptrToFirstCharInBSTR,
+                        (System.IntPtr)ch,
+                        (strManaged.Length + 1) * 2);
+                }
+
+                return ptrToFirstCharInBSTR;
+            }
+        }
+
+        /// <summary>
+        /// Convert BSTR to String 
+        /// </summary>
+        public unsafe static string ConvertBSTRToString(ushort* bstr)
+        {
+            if (bstr == null)
+                return null;
+            return new string((char*)bstr, 0, (int)ExternalInterop.SysStringLen(bstr));
+        }
+
+        /// <summary>
+        /// Free Allocated BSTR
+        /// </summary>
+        public static unsafe void SysFreeString(void* pBSTR)
+        {
+            SysFreeString(new IntPtr(pBSTR));
+        }
+
+        /// <summary>
+        /// Free Allocated BSTR
+        /// </summary>
+        public unsafe static void SysFreeString(IntPtr pBSTR)
+        {
+            ExternalInterop.SysFreeString(pBSTR);
+        } 
 #endif
 
-#if ENABLE_WINRT
+#if ENABLE_MIN_WINRT
        
         [MethodImplAttribute(MethodImplOptions.NoInlining)]
         public static unsafe HSTRING StringToHString(string sourceString)
@@ -365,9 +554,9 @@ namespace System.Runtime.InteropServices
                 return hr;
             }
         }
-#endif //ENABLE_WINRT
+#endif //ENABLE_MIN_WINRT
 
-        #endregion
+#endregion
 
         #region COM marshalling
 
@@ -660,10 +849,7 @@ namespace System.Runtime.InteropServices
 
             if (typeHnd.IsComClass())
             {
-                Debug.Assert(obj == null || obj is __ComObject);
-                ///
-                /// This code path should be executed only for WinRT classes
-                ///
+                // This code path should be executed only for WinRT classes
                 typeHnd = typeHnd.GetDefaultInterface();
                 Debug.Assert(!typeHnd.IsNull());
             }
@@ -840,7 +1026,7 @@ namespace System.Runtime.InteropServices
 #endif
         }
 
-        public static unsafe IntPtr CreateInstanceFromApp(Guid clsid)
+        public static unsafe IntPtr CoCreateInstanceEx(Guid clsid, string server)
         {
 #if ENABLE_WINRT
             Interop.COM.MULTI_QI results;
@@ -852,7 +1038,26 @@ namespace System.Runtime.InteropServices
                 results.pIID = new IntPtr(pIID);
                 results.pItf = IntPtr.Zero;
                 results.hr = 0;
-                int hr = ExternalInterop.CoCreateInstanceFromApp(pClsid, IntPtr.Zero, 0x15 /* (CLSCTX_SERVER) */, IntPtr.Zero, 1, pResults);
+                int hr;
+                            
+                // if server name is specified, do remote server activation
+                if (!String.IsNullOrEmpty(server))
+                {
+                    Interop.COM.COSERVERINFO serverInfo;
+                    fixed (char* pName = server)
+                    {
+                        serverInfo.Name = new IntPtr(pName);
+                        IntPtr pServerInfo = new IntPtr(&serverInfo);
+
+                        hr = ExternalInterop.CoCreateInstanceFromApp(pClsid, IntPtr.Zero, (int)Interop.COM.CLSCTX.CLSCTX_REMOTE_SERVER, pServerInfo, 1, pResults);
+                    }
+            
+                }
+                else
+                {
+                   hr = ExternalInterop.CoCreateInstanceFromApp(pClsid, IntPtr.Zero, (int)Interop.COM.CLSCTX.CLSCTX_SERVER, IntPtr.Zero, 1, pResults);
+                }
+
                 if (hr < 0)
                 {
                     throw McgMarshal.GetExceptionForHR(hr, /*isWinRTScenario = */ false);
@@ -861,13 +1066,18 @@ namespace System.Runtime.InteropServices
                 {
                     throw McgMarshal.GetExceptionForHR(results.hr, /* isWinRTScenario = */ false);
                 }
-                return results.pItf;
+            return results.pItf;
             }
 #else
-            throw new PlatformNotSupportedException("CreateInstanceFromApp");
+            throw new PlatformNotSupportedException("CoCreateInstanceEx");
 #endif
+
         }
 
+        public static unsafe IntPtr CoCreateInstanceEx(Guid clsid)
+        {
+            return CoCreateInstanceEx(clsid, string.Empty);
+        }
         #endregion
 
         #region Testing
@@ -909,7 +1119,7 @@ namespace System.Runtime.InteropServices
             return list;
         }
 
-        #endregion
+#endregion
 
         /// <summary>
         /// This method returns HR for the exception being thrown.
@@ -918,7 +1128,7 @@ namespace System.Runtime.InteropServices
         ///          If so, it means that this exception was actually caused by a native exception in which case we do simply use the same
         ///              message and stacktrace.
         ///      b.  If not, this is actually a managed exception and in this case we RoOriginateLanguageException with the msg, hresult and the IErrorInfo
-        ///          aasociated with the managed exception. This helps us to retrieve the same exception in case it comes back to native.
+        ///          associated with the managed exception. This helps us to retrieve the same exception in case it comes back to native.
         /// 2. On win8 and for classic COM scenarios.
         ///     a. We create IErrorInfo for the given Exception object and SetErrorInfo with the given IErrorInfo.
         /// </summary>
@@ -927,7 +1137,7 @@ namespace System.Runtime.InteropServices
         public static int GetHRForExceptionWinRT(Exception ex)
         {
 #if ENABLE_WINRT
-            return ExceptionHelpers.GetHRForExceptionWithErrorPropogationNoThrow(ex, true);
+            return ExceptionHelpers.GetHRForExceptionWithErrorPropagationNoThrow(ex, true);
 #else
             // TODO : ExceptionHelpers should be platform specific , move it to
             // seperate source files
@@ -940,7 +1150,7 @@ namespace System.Runtime.InteropServices
         public static int GetHRForException(Exception ex)
         {
 #if ENABLE_WINRT
-            return ExceptionHelpers.GetHRForExceptionWithErrorPropogationNoThrow(ex, false);
+            return ExceptionHelpers.GetHRForExceptionWithErrorPropagationNoThrow(ex, false);
 #else
             return ex.HResult;
 #endif
@@ -970,11 +1180,12 @@ namespace System.Runtime.InteropServices
 #elif CORECLR
             return Marshal.GetExceptionForHR(hr);
 #else
-            return new COMException(hr.ToString(), hr);
+            // TODO: Map HR to exeption even without COM interop support?
+            return new COMException(hr);
 #endif
         }
 
-        #region Shared templates
+#region Shared templates
 #if ENABLE_MIN_WINRT
         public static void CleanupNative<T>(IntPtr pObject)
         {
@@ -988,7 +1199,7 @@ namespace System.Runtime.InteropServices
             }
         }
 #endif
-        #endregion
+#endregion
 
 #if ENABLE_MIN_WINRT
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1009,7 +1220,7 @@ namespace System.Runtime.InteropServices
 
             IntPtr pResult = default(IntPtr);
 
-            int hr = CalliIntrinsics.StdCall<int>(
+            int hr = CalliIntrinsics.StdCall__int(
                 pIActivationFactoryInternal->pVtable->pfnActivateInstance,
                 pIActivationFactoryInternal,
                 &pResult
@@ -1047,14 +1258,14 @@ namespace System.Runtime.InteropServices
             return obj.GetDynamicAdapter(requestedType, default(RuntimeTypeHandle));
         }
 
-        #region "PInvoke Delegate"
+#region "PInvoke Delegate"
 
         public static IntPtr GetStubForPInvokeDelegate(RuntimeTypeHandle delegateType, Delegate dele)
         {
 #if CORECLR
              throw new NotSupportedException();
 #else
-            return PInvokeMarshal.GetStubForPInvokeDelegate(dele);
+            return PInvokeMarshal.GetFunctionPointerForDelegate(dele);
 #endif
         }
 
@@ -1078,7 +1289,7 @@ namespace System.Runtime.InteropServices
                 pStub
             );
 #else
-            return PInvokeMarshal.GetPInvokeDelegateForStub(pStub, delegateType);
+            return PInvokeMarshal.GetDelegateForFunctionPointer(pStub, delegateType);
 #endif
         }
 
@@ -1087,10 +1298,10 @@ namespace System.Runtime.InteropServices
         /// </summary>
         public static IntPtr GetCurrentCalleeOpenStaticDelegateFunctionPointer()
         {
-#if RHTESTCL || CORECLR || CORERT
-            throw new NotSupportedException();
-#else
+#if !RHTESTCL && PROJECTN
             return PInvokeMarshal.GetCurrentCalleeOpenStaticDelegateFunctionPointer();
+#else
+            throw new NotSupportedException();
 #endif
         }
 
@@ -1099,10 +1310,10 @@ namespace System.Runtime.InteropServices
         /// </summary>
         public static T GetCurrentCalleeDelegate<T>() where T : class // constraint can't be System.Delegate
         {
-#if RHTESTCL || CORECLR || CORERT
-            throw new NotSupportedException();
-#else
+#if !RHTESTCL && PROJECTN
             return PInvokeMarshal.GetCurrentCalleeDelegate<T>();
+#else
+            throw new NotSupportedException();
 #endif
         }
 #endregion

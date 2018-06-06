@@ -51,10 +51,20 @@ namespace System.Reflection.Runtime.TypeInfos
                 bool multiDim = this.IsVariableBoundArray;
                 int rank = this.GetArrayRank();
 
-                RuntimeTypeInfo arrayType = this;
+                RuntimeArrayTypeInfo arrayType = this;
                 RuntimeTypeInfo countType = CommonRuntimeTypes.Int32.CastToRuntimeTypeInfo();
 
                 {
+                    //
+                    // Expose a constructor that takes n Int32's (one for each dimension) and constructs a zero lower-bounded array. For example,
+                    //
+                    //   String[,]
+                    //
+                    // exposes
+                    //
+                    //   .ctor(int32, int32)
+                    //
+
                     RuntimeTypeInfo[] ctorParameters = new RuntimeTypeInfo[rank];
                     for (int i = 0; i < rank; i++)
                         ctorParameters[i] = countType;
@@ -63,36 +73,14 @@ namespace System.Reflection.Runtime.TypeInfos
                         arrayType,
                         ctorParameters,
                         InvokerOptions.AllowNullThis | InvokerOptions.DontWrapException,
-                        delegate (Object _this, Object[] args)
+                        delegate (Object _this, Object[] args, Type thisType)
                         {
-                            if (rank == 1)
+                            int[] lengths = new int[rank];
+                            for (int i = 0; i < rank; i++)
                             {
-                                // Legacy: This seems really wrong in the rank1-multidim case (as it's a case of a synthetic constructor that's declared on T[*] returning an instance of T[])
-                                // This is how the desktop behaves, however.
-
-                                int count = (int)(args[0]);
-
-                                RuntimeTypeInfo vectorType;
-                                if (multiDim)
-                                {
-                                    vectorType = arrayType.InternalRuntimeElementType.GetArrayType();
-                                }
-                                else
-                                {
-                                    vectorType = arrayType;
-                                }
-
-                                return ReflectionCoreExecution.ExecutionEnvironment.NewArray(vectorType.TypeHandle, count);
+                                lengths[i] = (int)(args[i]);
                             }
-                            else
-                            {
-                                int[] lengths = new int[rank];
-                                for (int i = 0; i < rank; i++)
-                                {
-                                    lengths[i] = (int)(args[i]);
-                                }
-                                return ReflectionCoreExecution.ExecutionEnvironment.NewMultiDimArray(arrayType.TypeHandle, lengths, null);
-                            }
+                            return ReflectionCoreExecution.ExecutionEnvironment.NewMultiDimArray(arrayType.TypeHandle, lengths, null);
                         }
                     );
                 }
@@ -113,7 +101,7 @@ namespace System.Reflection.Runtime.TypeInfos
 
                     int parameterCount = 2;
                     RuntimeTypeInfo elementType = this.InternalRuntimeElementType;
-                    while (elementType.IsArray && elementType.GetArrayRank() == 1)
+                    while (elementType.IsSZArray)
                     {
                         RuntimeTypeInfo[] ctorParameters = new RuntimeTypeInfo[parameterCount];
                         for (int i = 0; i < parameterCount; i++)
@@ -123,7 +111,7 @@ namespace System.Reflection.Runtime.TypeInfos
                             arrayType,
                             ctorParameters,
                             InvokerOptions.AllowNullThis | InvokerOptions.DontWrapException,
-                            delegate (Object _this, Object[] args)
+                            delegate (Object _this, Object[] args, Type thisType)
                             {
                                 int[] lengths = new int[args.Length];
                                 for (int i = 0; i < args.Length; i++)
@@ -141,6 +129,16 @@ namespace System.Reflection.Runtime.TypeInfos
 
                 if (multiDim)
                 {
+                    //
+                    // Expose a constructor that takes n*2 Int32's (two for each dimension) and constructs a arbitrarily lower-bounded array. For example,
+                    //
+                    //   String[,]
+                    //
+                    // exposes
+                    //
+                    //   .ctor(int32, int32, int32, int32)
+                    //
+
                     RuntimeTypeInfo[] ctorParameters = new RuntimeTypeInfo[rank * 2];
                     for (int i = 0; i < rank * 2; i++)
                         ctorParameters[i] = countType;
@@ -149,7 +147,7 @@ namespace System.Reflection.Runtime.TypeInfos
                         arrayType,
                         ctorParameters,
                         InvokerOptions.AllowNullThis | InvokerOptions.DontWrapException,
-                        delegate (Object _this, Object[] args)
+                        delegate (Object _this, Object[] args, Type thisType)
                         {
                             int[] lengths = new int[rank];
                             int[] lowerBounds = new int[rank];
@@ -172,7 +170,7 @@ namespace System.Reflection.Runtime.TypeInfos
                 int rank = this.GetArrayRank();
 
                 RuntimeTypeInfo indexType = CommonRuntimeTypes.Int32.CastToRuntimeTypeInfo();
-                RuntimeTypeInfo arrayType = this;
+                RuntimeArrayTypeInfo arrayType = this;
                 RuntimeTypeInfo elementType = arrayType.InternalRuntimeElementType;
                 RuntimeTypeInfo voidType = CommonRuntimeTypes.Void.CastToRuntimeTypeInfo();
 
@@ -187,7 +185,7 @@ namespace System.Reflection.Runtime.TypeInfos
                         getParameters,
                         elementType,
                         InvokerOptions.None,
-                        delegate (Object _this, Object[] args)
+                        delegate (Object _this, Object[] args, Type thisType)
                         {
                             Array array = (Array)_this;
                             int[] indices = new int[rank];
@@ -210,7 +208,7 @@ namespace System.Reflection.Runtime.TypeInfos
                         setParameters,
                         voidType,
                         InvokerOptions.None,
-                        delegate (Object _this, Object[] args)
+                        delegate (Object _this, Object[] args, Type thisType)
                         {
                             Array array = (Array)_this;
                             int[] indices = new int[rank];
@@ -234,7 +232,7 @@ namespace System.Reflection.Runtime.TypeInfos
                         addressParameters,
                         elementType.GetByRefType(),
                         InvokerOptions.None,
-                        delegate (Object _this, Object[] args)
+                        delegate (Object _this, Object[] args, Type thisType)
                         {
                             throw new NotSupportedException();
                         }

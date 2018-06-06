@@ -14,13 +14,14 @@ enum GenericVarianceType : UInt8;
 struct GenericUnificationDesc;
 class GenericUnificationHashtable;
 
+#include "ICodeManager.h"
+
 class RuntimeInstance
 {
     friend class AsmOffsets;
     friend struct DefaultSListTraits<RuntimeInstance>;
     friend class Thread;
 
-    PTR_RuntimeInstance         m_pNext;
     PTR_ThreadStore             m_pThreadStore;
     HANDLE                      m_hPalInstance; // this is the HANDLE passed into DllMain
     SList<Module>               m_ModuleList;
@@ -39,7 +40,6 @@ public:
 private:
     OsModuleList                m_OsModuleList;
 
-#ifdef FEATURE_DYNAMIC_CODE
     struct CodeManagerEntry;
     typedef DPTR(CodeManagerEntry) PTR_CodeManagerEntry;
 
@@ -53,7 +53,6 @@ private:
 
     typedef SList<CodeManagerEntry> CodeManagerList;
     CodeManagerList             m_CodeManagerList;
-#endif
 
 public:
     struct TypeManagerEntry
@@ -66,14 +65,6 @@ public:
     
 private:
     TypeManagerList             m_TypeManagerList;
-
-    // Indicates whether the runtime is in standalone exe mode where the only Redhawk module that will be
-    // loaded into the process (besides the runtime's own module) is the exe itself. This flag will be 
-    // correctly initialized once the exe module has loaded.
-    bool                        m_fStandaloneExeMode;
-
-    // If m_fStandaloneExeMode is set this contains a pointer to the exe module. Otherwise it's null.
-    Module *                    m_pStandaloneExeModule;
 
 #ifdef FEATURE_PROFILING
     // The thread writing the profile data is created lazily, whenever
@@ -133,6 +124,17 @@ private:
 
     bool                        m_conservativeStackReportingEnabled;
 
+    struct  UnboxingStubsRegion
+    {
+        PTR_VOID                m_pRegionStart;
+        UInt32                  m_cbRegion;
+        UnboxingStubsRegion*    m_pNextRegion;
+
+        UnboxingStubsRegion() : m_pRegionStart(0), m_cbRegion(0), m_pNextRegion(NULL) { }
+    };
+
+    UnboxingStubsRegion*        m_pUnboxingStubsRegion;
+
     RuntimeInstance();
 
     SList<Module>* GetModuleList();
@@ -140,6 +142,8 @@ private:
     SList<TypeManager*>* GetModuleManagerList();
 
     bool BuildGenericTypeHashTable();
+
+    ICodeManager * FindCodeManagerForClasslibFunction(PTR_VOID address);
 
 public:
     class ModuleIterator
@@ -164,19 +168,23 @@ public:
     Module * FindModuleByReadOnlyDataAddress(PTR_VOID Data);
     Module * FindModuleByOsHandle(HANDLE hOsHandle);
     PTR_UInt8 FindMethodStartAddress(PTR_VOID ControlPC);
-    bool EnableConservativeStackReporting();
+    PTR_UInt8 GetTargetOfUnboxingAndInstantiatingStub(PTR_VOID ControlPC);
+    void EnableConservativeStackReporting();
     bool IsConservativeStackReportingEnabled() { return m_conservativeStackReportingEnabled; }
 
-#ifdef FEATURE_DYNAMIC_CODE
     bool RegisterCodeManager(ICodeManager * pCodeManager, PTR_VOID pvStartRange, UInt32 cbRange);
     void UnregisterCodeManager(ICodeManager * pCodeManager);
-#endif
+
     ICodeManager * FindCodeManagerByAddress(PTR_VOID ControlPC);
+    PTR_VOID GetClasslibFunctionFromCodeAddress(PTR_VOID address, ClasslibFunctionId functionId);
 
     bool RegisterTypeManager(TypeManager * pTypeManager);
     TypeManagerList& GetTypeManagerList();
     OsModuleList* GetOsModuleList();
     ReaderWriterLock& GetTypeManagerLock();
+
+    bool RegisterUnboxingStubs(PTR_VOID pvStartRange, UInt32 cbRange);
+    bool IsUnboxingStub(UInt8* pCode);
 
     // This will hold the module list lock over each callback. Make sure
     // the callback will not trigger any operation that needs to make use
@@ -184,7 +192,7 @@ public:
     typedef void (* EnumerateModulesCallbackPFN)(Module *pModule, void *pvContext);
     void EnumerateModulesUnderLock(EnumerateModulesCallbackPFN pCallback, void *pvContext);
 
-    static  RuntimeInstance *   Create(HANDLE hPalInstance);
+    static bool Initialize(HANDLE hPalInstance);
     void Destroy();
 
     void EnumStaticGCRefDescs(void * pfnCallback, void * pvCallbackData);
@@ -193,6 +201,7 @@ public:
 
     bool ShouldHijackCallsiteForGcStress(UIntNative CallsiteIP);
     bool ShouldHijackLoopForGcStress(UIntNative CallsiteIP);
+    void SetLoopHijackFlags(UInt32 flag);
 
     void EnableGcPollStress();
     void UnsychronizedResetHijackedLoops();
@@ -219,22 +228,13 @@ public:
     void WriteProfileInfo();
 #endif // FEATURE_PROFILING
 
-    bool IsInStandaloneExeMode()
-    {
-        return m_fStandaloneExeMode;
-    }
-
-    Module * GetStandaloneExeModule()
-    {
-        ASSERT(IsInStandaloneExeMode());
-        return m_pStandaloneExeModule;
-    }
 };
 typedef DPTR(RuntimeInstance) PTR_RuntimeInstance;
 
 
 PTR_RuntimeInstance GetRuntimeInstance();
 
+#ifdef PROJECTN
 
 #define FOREACH_MODULE(p_module_name)                       \
 {                                                           \
@@ -247,3 +247,9 @@ PTR_RuntimeInstance GetRuntimeInstance();
     }                       \
 }                           \
 
+#else // PROJECTN
+
+#define FOREACH_MODULE(p_module_name) { Module * p_module_name = NULL; while (p_module_name != NULL) {
+#define END_FOREACH_MODULE            } }
+
+#endif // PROJECTN

@@ -43,33 +43,6 @@ namespace ILCompiler.DependencyAnalysis
 
         protected override string GetName(NodeFactory factory) => this.GetMangledName(factory.NameMangler);
 
-        /// <summary>
-        /// Helper method to compute the dependencies that would be needed for reflection field lookup.
-        /// </summary>
-        public static void AddReflectionFieldMapEntryDependencies(ref DependencyList dependencies, NodeFactory factory, TypeDesc type)
-        {
-            // TODO: https://github.com/dotnet/corert/issues/3224
-            // Reflection static field bases handling is here because in the current reflection model we reflection-enable
-            // all fields of types that are compiled. Ideally the list of reflection enabled fields should be known before
-            // we even start the compilation process (with the static bases being compilation roots like any other).
-            if (type is MetadataType && !type.HasInstantiation && !type.IsCanonicalSubtype(CanonicalFormKind.Any))
-            {
-                MetadataType metadataType = (MetadataType)type;
-
-                if (metadataType.GCStaticFieldSize.AsInt > 0)
-                {
-                    dependencies.Add(factory.TypeGCStaticsSymbol(metadataType), "GC statics for ReflectionFieldMap entry");
-                }
-
-                if (metadataType.NonGCStaticFieldSize.AsInt > 0)
-                {
-                    dependencies.Add(factory.TypeNonGCStaticsSymbol(metadataType), "Non-GC statics for ReflectionFieldMap entry");
-                }
-
-                // TODO: TLS dependencies
-            }
-        }
-
         public override ObjectData GetData(NodeFactory factory, bool relocsOnly = false)
         {
             // This node does not trigger generation of other nodes.
@@ -92,7 +65,7 @@ namespace ILCompiler.DependencyAnalysis
                 FieldTableFlags flags;
                 if (field.IsThreadStatic)
                 {
-                    flags = FieldTableFlags.ThreadStatic;
+                    flags = FieldTableFlags.ThreadStatic | FieldTableFlags.FieldOffsetEncodedDirectly;
                 }
                 else if (field.IsStatic)
                 {
@@ -111,6 +84,9 @@ namespace ILCompiler.DependencyAnalysis
 
                 if (fieldMapping.MetadataHandle != 0)
                     flags |= FieldTableFlags.HasMetadataHandle;
+
+                if (field.OwningType.IsCanonicalSubtype(CanonicalFormKind.Any))
+                    flags |= FieldTableFlags.IsAnyCanonicalEntry;
 
                 if (field.OwningType.IsCanonicalSubtype(CanonicalFormKind.Universal))
                     flags |= FieldTableFlags.IsUniversalCanonicalEntry;
@@ -139,15 +115,28 @@ namespace ILCompiler.DependencyAnalysis
 
                 if ((flags & FieldTableFlags.IsUniversalCanonicalEntry) != 0)
                 {
-                    throw new NotImplementedException();
+                    vertex = writer.GetTuple(vertex, writer.GetUnsignedConstant(checked((uint)field.GetFieldOrdinal())));
                 }
                 else
                 {
                     switch (flags & FieldTableFlags.StorageClass)
                     {
                         case FieldTableFlags.ThreadStatic:
-                            // TODO: thread statics
-                            continue;
+                            if (factory.Target.Abi == TargetAbi.ProjectN)
+                            {
+                                if (!field.OwningType.IsCanonicalSubtype(CanonicalFormKind.Any))
+                                {
+                                    ISymbolNode tlsOffsetForType = ((UtcNodeFactory)factory).TypeThreadStaticsOffsetSymbol((MetadataType)field.OwningType);
+                                    vertex = writer.GetTuple(vertex, writer.GetUnsignedConstant(_externalReferences.GetIndex(tlsOffsetForType)));
+                                }
+                                vertex = writer.GetTuple(vertex, writer.GetUnsignedConstant((uint)(field.Offset.AsInt)));
+                            }
+                            else
+                            {
+                                // TODO: CoreRT
+                                continue;
+                            }
+                            break;
 
                         case FieldTableFlags.Static:
                             {
@@ -196,5 +185,8 @@ namespace ILCompiler.DependencyAnalysis
 
             return new ObjectData(hashTableBytes, Array.Empty<Relocation>(), 1, new ISymbolDefinitionNode[] { this, _endSymbol });
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.ReflectionFieldMapNode;
     }
 }

@@ -12,9 +12,9 @@ namespace ILCompiler.DependencyAnalysis
 {
     public sealed class RyuJitNodeFactory : NodeFactory
     {
-        public RyuJitNodeFactory(CompilerTypeSystemContext context, CompilationModuleGroup compilationModuleGroup, MetadataManager metadataManager)
-            : base(context, compilationModuleGroup, metadataManager, 
-                  new CoreRTNameMangler(context.Target.IsWindows ? (NodeMangler)new WindowsNodeMangler() : (NodeMangler)new UnixNodeMangler(), false))
+        public RyuJitNodeFactory(CompilerTypeSystemContext context, CompilationModuleGroup compilationModuleGroup, MetadataManager metadataManager,
+            InteropStubManager interopStubManager, NameMangler nameMangler, VTableSliceProvider vtableSliceProvider, DictionaryLayoutProvider dictionaryLayoutProvider)
+            : base(context, compilationModuleGroup, metadataManager, interopStubManager, nameMangler, new LazyGenericsDisabledPolicy(), vtableSliceProvider, dictionaryLayoutProvider, new ExternSymbolsImportedNodeProvider())
         {
         }
 
@@ -37,16 +37,16 @@ namespace ILCompiler.DependencyAnalysis
 
                 // On CLR this would throw a SecurityException with "ECall methods must be packaged into a system module."
                 // This is a corner case that nobody is likely to care about.
-                throw new TypeSystemException.InvalidProgramException(ExceptionStringID.InvalidProgramSpecific, method);
+                ThrowHelper.ThrowInvalidProgramException(ExceptionStringID.InvalidProgramSpecific, method);
             }
 
-            if (CompilationModuleGroup.ContainsMethod(method))
+            if (CompilationModuleGroup.ContainsMethodBody(method, false))
             {
                 return new MethodCodeNode(method);
             }
             else
             {
-                return new ExternMethodSymbolNode(this, method);
+                return _importedNodeProvider.ImportedMethodCodeNode(this, method, false);
             }
         }
 
@@ -60,12 +60,12 @@ namespace ILCompiler.DependencyAnalysis
                 // 'this' and also provides an instantiation argument (we do a calling convention conversion).
                 // We don't do this for generic instance methods though because they don't use the EEType
                 // for the generic context anyway.
-                return new MethodCodeNode(TypeSystemContext.GetSpecialUnboxingThunk(method, CompilationModuleGroup.GeneratedAssembly));
+                return new MethodCodeNode(TypeSystemContext.GetSpecialUnboxingThunk(method, TypeSystemContext.GeneratedAssembly));
             }
             else
             {
                 // Otherwise we just unbox 'this' and don't touch anything else.
-                return new UnboxingStubNode(method);
+                return new UnboxingStubNode(method, Target);
             }
         }
 

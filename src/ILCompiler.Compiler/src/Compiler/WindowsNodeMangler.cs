@@ -11,8 +11,12 @@ namespace ILCompiler
     //
     // The naming format of these names is known to the debugger
     // 
-    public sealed class WindowsNodeMangler : NodeMangler
+    public class WindowsNodeMangler : NodeMangler
     {
+        public const string NonGCStaticMemberName = "__NONGCSTATICS";
+        public const string GCStaticMemberName = "__GCSTATICS";
+        public const string ThreadStaticMemberName = "__THREADSTATICS";
+
         // Mangled name of boxed version of a type
         public sealed override string MangledBoxedTypeName(TypeDesc type)
         {
@@ -28,22 +32,32 @@ namespace ILCompiler
                 mangledJustTypeName = MangledBoxedTypeName(type);
             else
                 mangledJustTypeName = NameMangler.GetMangledTypeName(type);
-            return mangledJustTypeName + "::`vftable'";
+            return "const " + mangledJustTypeName + "::`vftable'";
         }
 
         public sealed override string GCStatics(TypeDesc type)
         {
-            return NameMangler.GetMangledTypeName(type) + "::__GCSTATICS";
+            return NameMangler.GetMangledTypeName(type) + "::" + GCStaticMemberName;
         }
 
         public sealed override string NonGCStatics(TypeDesc type)
         {
-            return NameMangler.GetMangledTypeName(type) + "::__NONGCSTATICS";
+            return NameMangler.GetMangledTypeName(type) + "::" + NonGCStaticMemberName;
         }
 
         public sealed override string ThreadStatics(TypeDesc type)
         {
-            return NameMangler.CompilationUnitPrefix + NameMangler.GetMangledTypeName(type) + "::__THREADSTATICS";
+            return NameMangler.CompilationUnitPrefix + NameMangler.GetMangledTypeName(type) + "::" + ThreadStaticMemberName;
+        }
+
+        public sealed override string TypeGenericDictionary(TypeDesc type)
+        {
+            return GenericDictionaryNamePrefix + NameMangler.GetMangledTypeName(type);
+        }
+
+        public override string MethodGenericDictionary(MethodDesc method)
+        {
+            return GenericDictionaryNamePrefix + NameMangler.GetMangledMethodName(method);
         }
     }
 }

@@ -14,18 +14,13 @@
 
 using System;
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
-using System.Runtime.Serialization;
 
 namespace System.Globalization
 {
-    [Serializable]
     public class StringInfo
     {
-        [OptionalField(VersionAdded = 2)] 
         private string _str;
 
-        [NonSerialized]
         private int[] _indexes;
 
         // Legacy constructor
@@ -35,21 +30,6 @@ namespace System.Globalization
         public StringInfo(string value)
         {
             this.String = value;
-        }
-
-        [OnDeserializing]
-        private void OnDeserializing(StreamingContext ctx)
-        {
-            _str = String.Empty;
-        }
-
-        [OnDeserialized]
-        private void OnDeserialized(StreamingContext ctx)
-        {
-            if (_str.Length == 0)
-            {
-                _indexes = null;
-            }
         }
 
         public override bool Equals(Object value)
@@ -96,7 +76,6 @@ namespace System.Globalization
                     throw new ArgumentNullException(nameof(String),
                         SR.ArgumentNull_String);
                 }
-                Contract.EndContractBlock();
 
                 _str = value;
                 _indexes = null;
@@ -281,14 +260,13 @@ namespace System.Globalization
             {
                 throw new ArgumentNullException(nameof(str));
             }
-            Contract.EndContractBlock();
 
             int len = str.Length;
             if (index < 0 || index >= len)
             {
                 if (index == len)
                 {
-                    return (String.Empty);
+                    return (string.Empty);
                 }
                 throw new ArgumentOutOfRangeException(nameof(index), SR.ArgumentOutOfRange_Index);
             }
@@ -312,7 +290,6 @@ namespace System.Globalization
             {
                 throw new ArgumentNullException(nameof(str));
             }
-            Contract.EndContractBlock();
 
             int len = str.Length;
             if (index < 0 || (index > len))
@@ -341,7 +318,6 @@ namespace System.Globalization
             {
                 throw new ArgumentNullException(nameof(str));
             }
-            Contract.EndContractBlock();
 
             int len = str.Length;
             int[] result = new int[len];

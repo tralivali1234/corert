@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 // See the LICENSE file in the project root for more information.
 
+using System;
 using Microsoft.Win32;
 
 #if ES_BUILD_STANDALONE
@@ -15,7 +16,7 @@ namespace System.Diagnostics.Tracing
     {
         // Register an event provider.
         unsafe uint EventRegister(
-            ref Guid providerId,
+            EventSource eventSource,
             UnsafeNativeMethods.ManifestEtw.EtwEnableCallback enableCallback,
             void* callbackContext,
             ref long registrationHandle);
@@ -27,6 +28,7 @@ namespace System.Diagnostics.Tracing
         unsafe int EventWriteTransferWrapper(
             long registrationHandle,
             ref EventDescriptor eventDescriptor,
+            IntPtr eventHandle,
             Guid* activityId,
             Guid* relatedActivityId,
             int userDataCount,
@@ -34,5 +36,8 @@ namespace System.Diagnostics.Tracing
 
         // Get or set the per-thread activity ID.
         int EventActivityIdControl(UnsafeNativeMethods.ManifestEtw.ActivityControl ControlCode, ref Guid ActivityId);
+
+        // Define an EventPipeEvent handle.
+        unsafe IntPtr DefineEventHandle(uint eventID, string eventName, Int64 keywords, uint eventVersion, uint level, byte *pMetadata, uint metadataLength);
     }
 }

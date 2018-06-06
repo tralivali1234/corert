@@ -88,6 +88,9 @@ namespace ILCompiler.DependencyAnalysis
 
         public static void GetVirtualInvokeMapDependencies(ref DependencyList dependencies, NodeFactory factory, MethodDesc method)
         {
+            if (!factory.MetadataManager.SupportsReflection)
+                return;
+
             if (NeedsVirtualInvokeInfo(method))
             {
                 dependencies = dependencies ?? new DependencyList();
@@ -108,6 +111,15 @@ namespace ILCompiler.DependencyAnalysis
                 NativeLayoutMethodNameAndSignatureVertexNode nameAndSig = factory.NativeLayout.MethodNameAndSignatureVertex(method.GetTypicalMethodDefinition());
                 NativeLayoutPlacedSignatureVertexNode placedNameAndSig = factory.NativeLayout.PlacedSignatureVertex(nameAndSig);
                 dependencies.Add(placedNameAndSig, "Reflection virtual invoke method signature");
+
+                if (!method.HasInstantiation)
+                {
+                    MethodDesc slotDefiningMethod = MetadataVirtualMethodAlgorithm.FindSlotDefiningMethodForVirtualMethod(method);
+                    if (!factory.VTable(slotDefiningMethod.OwningType).HasFixedSlots)
+                    {
+                        dependencies.Add(factory.VirtualMethodUse(slotDefiningMethod), "Reflection virtual invoke method");
+                    }
+                }
             }
         }
 
@@ -206,14 +218,8 @@ namespace ILCompiler.DependencyAnalysis
                 else
                 {
                     // Get the declaring method for slot on the instantiated declaring type
-                    int slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, declaringMethodForSlot, factory.Target.Abi != TargetAbi.ProjectN);
-
-                    if (slot == -1)
-                    {
-                        // This method doesn't have a slot. (At this time, this is only done for the Object.Finalize method)
-                        Debug.Assert(declaringMethodForSlot.Name == "Finalize");
-                        continue;
-                    }
+                    int slot = VirtualMethodSlotHelper.GetVirtualMethodSlot(factory, declaringMethodForSlot, declaringMethodForSlot.OwningType, factory.Target.Abi != TargetAbi.ProjectN);
+                    Debug.Assert(slot != -1);
 
                     vertex = writer.GetTuple(
                         writer.GetUnsignedConstant(_externalReferences.GetIndex(containingTypeKeyNode)),
@@ -234,5 +240,8 @@ namespace ILCompiler.DependencyAnalysis
 
             return new ObjectData(hashTableBytes, Array.Empty<Relocation>(), 1, new ISymbolDefinitionNode[] { this, _endSymbol });
         }
+
+        protected internal override int Phase => (int)ObjectNodePhase.Ordered;
+        protected internal override int ClassCode => (int)ObjectNodeOrder.ReflectionVirtualInvokeMapNode;
     }
 }

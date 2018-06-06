@@ -101,7 +101,7 @@ namespace Internal.TypeSystem
         ThrowOnUnmappableCharMask = 12288
     }
 
-    public struct PInvokeFlags
+    public struct PInvokeFlags : IEquatable<PInvokeFlags>, IComparable<PInvokeFlags>
     {
         private PInvokeAttributes _attributes;
         public PInvokeAttributes Attributes
@@ -184,7 +184,7 @@ namespace Internal.TypeSystem
                         _attributes |= PInvokeAttributes.CallingConventionThisCall;
                         break;
                     default:
-                        System.Diagnostics.Debug.Assert(false, "Unexpected Unmanaged Calling Convention.");
+                        System.Diagnostics.Debug.Fail("Unexpected Unmanaged Calling Convention.");
                         break;
                 }
             }
@@ -279,7 +279,26 @@ namespace Internal.TypeSystem
                 }
             }
         }
-        
+
+        public int CompareTo(PInvokeFlags other)
+        {
+            return Attributes.CompareTo(other.Attributes);
+        }
+
+        public bool Equals(PInvokeFlags other)
+        {
+            return Attributes == other.Attributes;
+        }
+
+        public override bool Equals(object obj)
+        {
+            return obj is PInvokeFlags other && Equals(other);
+        }
+
+        public override int GetHashCode()
+        {
+            return Attributes.GetHashCode();
+        }
     }
 
     /// <summary>

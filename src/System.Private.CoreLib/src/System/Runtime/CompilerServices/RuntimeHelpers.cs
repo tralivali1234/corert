@@ -65,23 +65,23 @@ namespace System.Runtime.CompilerServices
             return RuntimeImports.RhMemberwiseClone(obj);
         }
 
-        public new static bool Equals(Object obj1, Object obj2)
+        public new static bool Equals(Object o1, Object o2)
         {
-            if (obj1 == obj2)
+            if (o1 == o2)
                 return true;
 
-            if ((obj1 == null) || (obj2 == null))
+            if ((o1 == null) || (o2 == null))
                 return false;
 
             // If it's not a value class, don't compare by value
-            if (!obj1.EETypePtr.IsValueType)
+            if (!o1.EETypePtr.IsValueType)
                 return false;
 
             // Make sure they are the same type.
-            if (obj1.EETypePtr != obj2.EETypePtr)
+            if (o1.EETypePtr != o2.EETypePtr)
                 return false;
 
-            return RuntimeImports.RhCompareObjectContentsAndPadding(obj1, obj2);
+            return RuntimeImports.RhCompareObjectContentsAndPadding(o1, o2);
         }
 
 #if !FEATURE_SYNCTABLE
@@ -219,6 +219,13 @@ namespace System.Runtime.CompilerServices
             return !pEEType.IsValueType || pEEType.HasPointers;
         }
 
+        [Intrinsic]
+        public static bool IsReference<T>()
+        {
+            var pEEType = EETypePtr.EETypePtrOf<T>();
+            return !pEEType.IsValueType;
+        }
+
         // Constrained Execution Regions APIs are NOP's because we do not support CERs in .NET Core at all.
         public static void ProbeForSufficientStack() { }
         public static void PrepareConstrainedRegions() { }
@@ -271,7 +278,7 @@ namespace System.Runtime.CompilerServices
                 throw new SerializationException(SR.Format(SR.Serialization_InvalidType, type.ToString()));
             }
 
-            if (type.IsArray || type.IsByRef || type.IsPointer)
+            if (type.HasElementType || type.IsGenericParameter)
             {
                 throw new ArgumentException(SR.Argument_InvalidValue);
             }
@@ -305,7 +312,7 @@ namespace System.Runtime.CompilerServices
 
             if (eeTypePtr.IsNullable)
             {
-                return GetUninitializedObject(ReflectionCoreNonPortable.GetRuntimeTypeForEEType(eeTypePtr.NullableType));
+                return GetUninitializedObject(RuntimeTypeUnifier.GetRuntimeTypeForEEType(eeTypePtr.NullableType));
             }
 
             // Triggering the .cctor here is slightly different than desktop/CoreCLR, which 

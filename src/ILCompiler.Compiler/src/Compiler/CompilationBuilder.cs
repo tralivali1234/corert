@@ -14,6 +14,7 @@ namespace ILCompiler
     {
         protected readonly CompilerTypeSystemContext _context;
         protected readonly CompilationModuleGroup _compilationGroup;
+        protected readonly NameMangler _nameMangler;
 
         // These need to provide reasonable defaults so that the user can optionally skip
         // calling the Use/Configure methods and still get something reasonable back.
@@ -21,13 +22,18 @@ namespace ILCompiler
         private DependencyTrackingLevel _dependencyTrackingLevel = DependencyTrackingLevel.None;
         protected IEnumerable<ICompilationRootProvider> _compilationRoots = Array.Empty<ICompilationRootProvider>();
         protected OptimizationMode _optimizationMode = OptimizationMode.None;
-        protected bool _generateDebugInfo = false;
-        private string _metadataLogFile = null;
+        protected MetadataManager _metadataManager;
+        protected VTableSliceProvider _vtableSliceProvider = new LazyVTableSliceProvider();
+        protected DictionaryLayoutProvider _dictionaryLayoutProvider = new LazyDictionaryLayoutProvider();
+        protected DebugInformationProvider _debugInformationProvider = new DebugInformationProvider();
+        protected DevirtualizationManager _devirtualizationManager = new DevirtualizationManager();
 
-        public CompilationBuilder(CompilerTypeSystemContext context, CompilationModuleGroup compilationGroup)
+        public CompilationBuilder(CompilerTypeSystemContext context, CompilationModuleGroup compilationGroup, NameMangler nameMangler)
         {
             _context = context;
             _compilationGroup = compilationGroup;
+            _nameMangler = nameMangler;
+            _metadataManager = new EmptyMetadataManager(context);
         }
 
         public CompilationBuilder UseLogger(Logger logger)
@@ -39,6 +45,12 @@ namespace ILCompiler
         public CompilationBuilder UseDependencyTracking(DependencyTrackingLevel trackingLevel)
         {
             _dependencyTrackingLevel = trackingLevel;
+            return this;
+        }
+
+        public CompilationBuilder UseMetadataManager(MetadataManager metadataManager)
+        {
+            _metadataManager = metadataManager;
             return this;
         }
 
@@ -54,66 +66,43 @@ namespace ILCompiler
             return this;
         }
 
-        public CompilationBuilder UseMetadataLogFile(string fileName)
+        public CompilationBuilder UseVTableSliceProvider(VTableSliceProvider provider)
         {
-            _metadataLogFile = fileName;
+            _vtableSliceProvider = provider;
             return this;
         }
 
-        public CompilationBuilder UseDebugInfo(bool generateDebugInfo)
+        public CompilationBuilder UseGenericDictionaryLayoutProvider(DictionaryLayoutProvider provider)
         {
-            _generateDebugInfo = generateDebugInfo;
+            _dictionaryLayoutProvider = provider;
+            return this;
+        }
+
+        public CompilationBuilder UseDevirtualizationManager(DevirtualizationManager manager)
+        {
+            _devirtualizationManager = manager;
+            return this;
+        }
+
+        public CompilationBuilder UseDebugInfoProvider(DebugInformationProvider provider)
+        {
+            _debugInformationProvider = provider;
             return this;
         }
 
         public abstract CompilationBuilder UseBackendOptions(IEnumerable<string> options);
 
-        protected DependencyAnalyzerBase<NodeFactory> CreateDependencyGraph(NodeFactory factory)
+        protected DependencyAnalyzerBase<NodeFactory> CreateDependencyGraph(NodeFactory factory, IComparer<DependencyNodeCore<NodeFactory>> comparer = null)
         {
-            // Choose which dependency graph implementation to use based on the amount of logging requested.
-            switch (_dependencyTrackingLevel)
-            {
-                case DependencyTrackingLevel.None:
-                    return new DependencyAnalyzer<NoLogStrategy<NodeFactory>, NodeFactory>(factory, null);
-
-                case DependencyTrackingLevel.First:
-                    return new DependencyAnalyzer<FirstMarkLogStrategy<NodeFactory>, NodeFactory>(factory, null);
-
-                case DependencyTrackingLevel.All:
-                    return new DependencyAnalyzer<FullGraphLogStrategy<NodeFactory>, NodeFactory>(factory, null);
-
-                default:
-                    throw new InvalidOperationException();
-            }
+            return _dependencyTrackingLevel.CreateDependencyGraph(factory, comparer);
         }
 
-        protected MetadataManager CreateMetadataManager()
+        public ILScannerBuilder GetILScannerBuilder(CompilationModuleGroup compilationGroup = null)
         {
-            return new CompilerGeneratedMetadataManager(_compilationGroup, _context, _metadataLogFile);
+            return new ILScannerBuilder(_context, compilationGroup ?? _compilationGroup, _nameMangler);
         }
 
         public abstract ICompilation ToCompilation();
-    }
-
-    /// <summary>
-    /// Represents the level of dependency tracking within the dependency analysis system.
-    /// </summary>
-    public enum DependencyTrackingLevel
-    {
-        /// <summary>
-        /// Tracking disabled. This is the most performant and memory efficient option.
-        /// </summary>
-        None,
-
-        /// <summary>
-        /// The graph keeps track of the first dependency.
-        /// </summary>
-        First,
-
-        /// <summary>
-        /// The graph keeps track of all dependencies.
-        /// </summary>
-        All
     }
 
     /// <summary>

@@ -4,15 +4,13 @@
 
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace Microsoft.Win32.SafeHandles
 {
     public sealed class SafeFileHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
-        /// <summary>A handle value of -1.</summary>
-        private static readonly IntPtr s_invalidHandle = new IntPtr(-1);
-
         private SafeFileHandle() : this(ownsHandle: true)
         {
         }
@@ -20,7 +18,7 @@ namespace Microsoft.Win32.SafeHandles
         private SafeFileHandle(bool ownsHandle)
             : base(ownsHandle)
         {
-            SetHandle(s_invalidHandle);
+            SetHandle(new IntPtr(-1));
         }
 
         public SafeFileHandle(IntPtr preexistingHandle, bool ownsHandle) : this(ownsHandle)
@@ -38,18 +36,30 @@ namespace Microsoft.Win32.SafeHandles
         internal static SafeFileHandle Open(string path, Interop.Sys.OpenFlags flags, int mode)
         {
             Debug.Assert(path != null);
+            SafeFileHandle handle = Interop.Sys.Open(path, flags, mode);
 
-            // If we fail to open the file due to a path not existing, we need to know whether to blame
-            // the file itself or its directory.  If we're creating the file, then we blame the directory,
-            // otherwise we blame the file.
-            bool enoentDueToDirectory = (flags & Interop.Sys.OpenFlags.O_CREAT) != 0;
+            if (handle.IsInvalid)
+            {
+                handle.Dispose();
+                Interop.ErrorInfo error = Interop.Sys.GetLastErrorInfo();
 
-            // Open the file. 
-            SafeFileHandle handle = Interop.CheckIo(
-                Interop.Sys.Open(path, flags, mode),
-                path, 
-                isDirectory: enoentDueToDirectory,
-                errorRewriter: e => (e.Error == Interop.Error.EISDIR) ? Interop.Error.EACCES.Info() : e);
+                // If we fail to open the file due to a path not existing, we need to know whether to blame
+                // the file itself or its directory.  If we're creating the file, then we blame the directory,
+                // otherwise we blame the file.
+                //
+                // When opening, we need to align with Windows, which considers a missing path to be
+                // FileNotFound only if the containing directory exists.
+
+                bool isDirectory = (error.Error == Interop.Error.ENOENT) &&
+                    ((flags & Interop.Sys.OpenFlags.O_CREAT) != 0
+                    || !DirectoryExists(Path.GetDirectoryName(PathInternal.TrimEndingDirectorySeparator(path))));
+
+                Interop.CheckIo(
+                    error.Error,
+                    path,
+                    isDirectory,
+                    errorRewriter: e => (e.Error == Interop.Error.EISDIR) ? Interop.Error.EACCES.Info() : e);
+            }
 
             // Make sure it's not a directory; we do this after opening it once we have a file descriptor 
             // to avoid race conditions.
@@ -66,6 +76,22 @@ namespace Microsoft.Win32.SafeHandles
             }
 
             return handle;
+        }
+
+        private static bool DirectoryExists(string fullPath)
+        {
+            Interop.Sys.FileStatus fileinfo;
+
+            // First use stat, as we want to follow symlinks.  If that fails, it could be because the symlink
+            // is broken, we don't have permissions, etc., in which case fall back to using LStat to evaluate
+            // based on the symlink itself.
+            if (Interop.Sys.Stat(fullPath, out fileinfo) < 0 &&
+                Interop.Sys.LStat(fullPath, out fileinfo) < 0)
+            {
+                return false;
+            }
+
+            return ((fileinfo.Mode & Interop.Sys.FileTypes.S_IFMT) == Interop.Sys.FileTypes.S_IFDIR);
         }
 
         /// <summary>Opens a SafeFileHandle for a file descriptor created by a provided delegate.</summary>

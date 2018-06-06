@@ -3,11 +3,13 @@
 // See the LICENSE file in the project root for more information.
 
 using System.Diagnostics;
+using System.Runtime;
 using System.Runtime.CompilerServices;
 using Internal.Runtime.Augments;
 
 namespace System.Threading
 {
+    [ReflectionBlocked]
     public sealed class Lock
     {
         // The following constants define characteristics of spinning logic in the Lock class
@@ -40,8 +42,8 @@ namespace System.Threading
 
         private volatile int _state;
 
-        private int _owningThreadId;
         private uint _recursionCount;
+        private IntPtr _owningThreadId;
         private volatile AutoResetEvent _lazyEvent;
 
         private AutoResetEvent Event
@@ -59,6 +61,13 @@ namespace System.Threading
             }
         }
 
+#if PROJECTN
+        // Use a compiler intrinsic for .NET Native
+        private static IntPtr CurrentNativeThreadId => (IntPtr)Environment.CurrentNativeThreadId;
+#else
+        private static IntPtr CurrentNativeThreadId => (IntPtr)RuntimeImports.RhCurrentNativeThreadId();
+#endif // PROJECTN
+
         // On platforms where CurrentNativeThreadId redirects to ManagedThreadId.Current the inlined
         // version of Lock.Acquire has the ManagedThreadId.Current call not inlined, while the non-inlined
         // version has it inlined.  So it saves code to keep this function not inlined while having
@@ -66,14 +75,14 @@ namespace System.Threading
         [MethodImpl(MethodImplOptions.NoInlining)]
         public void Acquire()
         {
-            int currentThreadId = Environment.CurrentNativeThreadId;
+            IntPtr currentThreadId = CurrentNativeThreadId;
 
             //
             // Make one quick attempt to acquire an uncontended lock
             //
             if (Interlocked.CompareExchange(ref _state, Locked, Uncontended) == Uncontended)
             {
-                Debug.Assert(_owningThreadId == 0);
+                Debug.Assert(_owningThreadId == IntPtr.Zero);
                 Debug.Assert(_recursionCount == 0);
                 _owningThreadId = currentThreadId;
                 return;
@@ -96,14 +105,14 @@ namespace System.Threading
             if (millisecondsTimeout < -1)
                 throw new ArgumentOutOfRangeException(nameof(millisecondsTimeout), SR.ArgumentOutOfRange_NeedNonNegOrNegative1);
 
-            int currentThreadId = Environment.CurrentNativeThreadId;
+            IntPtr currentThreadId = CurrentNativeThreadId;
 
             //
             // Make one quick attempt to acquire an uncontended lock
             //
             if (Interlocked.CompareExchange(ref _state, Locked, Uncontended) == Uncontended)
             {
-                Debug.Assert(_owningThreadId == 0);
+                Debug.Assert(_owningThreadId == IntPtr.Zero);
                 Debug.Assert(_recursionCount == 0);
                 _owningThreadId = currentThreadId;
                 return true;
@@ -115,7 +124,7 @@ namespace System.Threading
             return TryAcquireContended(currentThreadId, millisecondsTimeout);
         }
 
-        private bool TryAcquireContended(int currentThreadId, int millisecondsTimeout)
+        private bool TryAcquireContended(IntPtr currentThreadId, int millisecondsTimeout)
         {
             //
             // If we already own the lock, just increment the recursion count.
@@ -159,7 +168,7 @@ namespace System.Threading
                     RuntimeThread.SpinWait(spins);
                     spins *= 2;
                 }
-                else
+                else if (oldState != 0)
                 {
                     //
                     // We reached our spin limit, and need to wait.  Increment the waiter count.
@@ -221,7 +230,7 @@ namespace System.Threading
 
         GotTheLock:
             Debug.Assert((_state | Locked) != 0);
-            Debug.Assert(_owningThreadId == 0);
+            Debug.Assert(_owningThreadId == IntPtr.Zero);
             Debug.Assert(_recursionCount == 0);
             _owningThreadId = currentThreadId;
             return true;
@@ -250,7 +259,7 @@ namespace System.Threading
                 // because while we're doing this check the current thread is definitely still
                 // alive.
                 //
-                int currentThreadId = Environment.CurrentNativeThreadId;
+                IntPtr currentThreadId = CurrentNativeThreadId;
                 bool acquired = (currentThreadId == _owningThreadId);
                 if (acquired)
                     Debug.Assert((_state & Locked) != 0);
@@ -286,7 +295,7 @@ namespace System.Threading
         private void ReleaseCore()
         {
             Debug.Assert(_recursionCount == 0);
-            _owningThreadId = 0;
+            _owningThreadId = IntPtr.Zero;
 
             //
             // Make one quick attempt to release an uncontended lock
@@ -303,7 +312,7 @@ namespace System.Threading
         private void ReleaseContended()
         {
             Debug.Assert(_recursionCount == 0);
-            Debug.Assert(_owningThreadId == 0);
+            Debug.Assert(_owningThreadId == IntPtr.Zero);
 
             while (true)
             {

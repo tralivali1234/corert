@@ -21,7 +21,6 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Runtime.Serialization;
 using System.Runtime.Versioning;
-using System.Diagnostics.Contracts;
 using System.Collections.Generic;
 
 namespace System.Resources
@@ -32,7 +31,6 @@ namespace System.Resources
     // enumerates over an IResourceReader, loading every name and value, and 
     // stores them in a hash table.  Custom IResourceReaders can be used.
     //
-    [Serializable]
     public class ResourceSet : IDisposable, IEnumerable
     {
         [NonSerialized]
@@ -80,7 +78,6 @@ namespace System.Resources
         {
             if (reader == null)
                 throw new ArgumentNullException(nameof(reader));
-            Contract.EndContractBlock();
             Reader = reader;
             CommonInit();
             ReadResources();
@@ -237,14 +234,14 @@ namespace System.Resources
         {
             if (name == null)
                 throw new ArgumentNullException("name");
-            Contract.EndContractBlock();
 
             Dictionary<object, object> copyOfTable = _table;  // Avoid a race with Dispose
 
             if (copyOfTable == null)
                 throw new ObjectDisposedException(null, SR.ObjectDisposed_ResourceSet);
-
-            return copyOfTable[name];
+            object value;
+            copyOfTable.TryGetValue(name, out value);
+            return value;
         }
 
         private Object GetCaseInsensitiveObjectInternal(String name)
@@ -266,8 +263,9 @@ namespace System.Resources
                 }
                 _caseInsensitiveTable = caseTable;
             }
-
-            return caseTable[name];
+            object value;
+            caseTable.TryGetValue(name, out value);
+            return value;
         }
 
         /// <summary>

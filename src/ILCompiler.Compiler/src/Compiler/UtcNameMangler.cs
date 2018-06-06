@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Collections.ObjectModel;
@@ -21,7 +22,12 @@ namespace ILCompiler
         public bool isImport;
         public uint tlsIndexOrdinal;
         public ReadOnlyDictionary<TypeDesc, uint> typeOrdinals;
+        public ReadOnlyDictionary<TypeDesc, uint> nonGcStaticOrdinals;
+        public ReadOnlyDictionary<TypeDesc, uint> gcStaticOrdinals;
+        public ReadOnlyDictionary<TypeDesc, uint> tlsStaticOrdinals;
         public ReadOnlyDictionary<MethodDesc, uint> methodOrdinals;
+        public ReadOnlyDictionary<MethodDesc, uint> unboxingStubMethodOrdinals;
+        public ReadOnlyDictionary<MethodDesc, uint> methodDictionaryOrdinals;
     }
 
     public class UTCNameMangler : NameMangler
@@ -34,15 +40,19 @@ namespace ILCompiler
         private ImportExportOrdinals _importOrdinals;
         private ImportExportOrdinals _exportOrdinals;
 
+        private Dictionary<EcmaModule, int> _inputModuleIndices;
+
         private bool HasImport { get; set; }
         private bool HasExport { get; set; }
+        private bool BuildingClassLib { get; }
 
-        public UTCNameMangler(bool hasImport, bool hasExport, ImportExportOrdinals ordinals) : base(new WindowsNodeMangler())
+        public UTCNameMangler(bool hasImport, bool hasExport, ImportExportOrdinals ordinals, TypeSystemContext context, List<EcmaModule> inputModules, bool buildingClassLib) : base(new UtcNodeMangler())
         {
             // Do not support both imports and exports for one module
             Debug.Assert(!hasImport || !hasExport);
             HasImport = hasImport;
             HasExport = hasExport;
+            BuildingClassLib = buildingClassLib;
 
             if (hasImport)
             {
@@ -52,6 +62,36 @@ namespace ILCompiler
             {
                 _exportOrdinals = ordinals;
             }
+
+            _inputModuleIndices = new Dictionary<EcmaModule, int>();
+            for (int i = 0; i < inputModules.Count; i++)
+                _inputModuleIndices[inputModules[i]] = i;
+
+            // Use SHA256 hash here to provide a high degree of uniqueness to symbol names without requiring them to be long
+            // This hash function provides an exceedingly high likelihood that no two strings will be given equal symbol names
+            // This is not considered used for security purpose; however collisions would be highly unfortunate as they will cause compilation
+            // failure.
+            _sha256 = SHA256.Create();
+
+            // Special case primitive types and use shortened names. This reduces string sizes in symbol names, and reduces the overall native memory
+            // usage of the compiler
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Void), "void");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Boolean), "bool");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Char), "char");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.SByte), "sbyte");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Byte), "byte");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Int16), "short");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.UInt16), "ushort");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Int32), "int");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.UInt32), "uint");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Int64), "long");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.UInt64), "ulong");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Single), "float");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Double), "double");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.Object), "object");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.String), "string");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.IntPtr), "IntPtr");
+            _mangledTypeNames = _mangledTypeNames.Add(context.GetWellKnownType(WellKnownType.UIntPtr), "UIntPtr");
         }
 
         private bool GetMethodOrdinal(MethodDesc method, out uint ordinal)
@@ -62,6 +102,22 @@ namespace ILCompiler
             }
 
             if (HasExport && _exportOrdinals.methodOrdinals.TryGetValue(method, out ordinal))
+            {
+                return true;
+            }
+
+            ordinal = 0;
+            return false;
+        }
+
+        private bool GetMethodDictionaryOrdinal(MethodDesc method, out uint ordinal)
+        {
+            if (HasImport && _importOrdinals.methodDictionaryOrdinals.TryGetValue(method, out ordinal))
+            {
+                return true;
+            }
+
+            if (HasExport && _exportOrdinals.methodDictionaryOrdinals.TryGetValue(method, out ordinal))
             {
                 return true;
             }
@@ -129,6 +185,15 @@ namespace ILCompiler
                     continue;
                 }
 
+                if (sb != null)
+                {
+                    if (c == '[' || c == ']' || c == '&' || c == '*' || c == '$' || c == '<' || c == '>')
+                    {
+                        sb.Append(c);
+                        continue;
+                    }
+                }
+
                 if (sb == null)
                     sb = new StringBuilder(s, 0, i, s.Length);
 
@@ -136,6 +201,13 @@ namespace ILCompiler
                 if (typeName && c == '.')
                 {
                     sb.Append("::");
+                    continue;
+                }
+
+                if (c == '$' && i == 0)
+                {
+                    // '$' is used at the begining of the string as assembly identifiers (ex: $0_, similar to ProjectN)
+                    sb.Append(c);
                     continue;
                 }
 
@@ -174,16 +246,12 @@ namespace ILCompiler
 
             if (mangledName != literal)
             {
-                if (_sha256 == null)
+                byte[] hash;
+                lock (this)
                 {
-                    // Use SHA256 hash here to provide a high degree of uniqueness to symbol names without requiring them to be long
-                    // This hash function provides an exceedingly high likelihood that no two strings will be given equal symbol names
-                    // This is not considered used for security purpose; however collisions would be highly unfortunate as they will cause compilation
-                    // failure.
-                    _sha256 = SHA256.Create();
+                    hash = _sha256.ComputeHash(GetBytesFromString(literal));
                 }
 
-                var hash = _sha256.ComputeHash(GetBytesFromString(literal));
                 mangledName += "_" + BitConverter.ToString(hash).Replace("-", "");
             }
 
@@ -211,7 +279,7 @@ namespace ILCompiler
                 result = string.Concat(origName, deDuplicatePrefix, (iter++).ToStringInvariant());
             }
             return result;
-        }
+        }               
 
         public override string GetMangledTypeName(TypeDesc type)
         {
@@ -230,6 +298,20 @@ namespace ILCompiler
             return EnterNameScopeSequence + name + ExitNameScopeSequence;
         }
 
+        private string ComputeMangledModuleName(EcmaAssembly module)
+        {
+            // Do not prepend the module prefix when building pntestcl because the prefix is unknown
+            // when building an app against pntestcl.
+            if (!BuildingClassLib)
+            {
+                int index;
+                if (_inputModuleIndices.TryGetValue(module, out index))
+                    return "$" + index;
+            }
+
+            return SanitizeName(module.GetName().Name);
+        }
+
         /// <summary>
         /// If given <param name="type"/> is an <see cref="EcmaType"/> precompute its mangled type name
         /// along with all the other types from the same module as <param name="type"/>.
@@ -244,7 +326,7 @@ namespace ILCompiler
             {
                 EcmaType ecmaType = (EcmaType)type;
 
-                string prependAssemblyName = SanitizeName(((EcmaAssembly)ecmaType.EcmaModule).GetName().Name);
+                string prependAssemblyName = ComputeMangledModuleName((EcmaAssembly)ecmaType.EcmaModule);
 
                 var deduplicator = new HashSet<string>();
 
@@ -256,6 +338,15 @@ namespace ILCompiler
                     {
                         foreach (MetadataType t in ((EcmaType)type).EcmaModule.GetAllTypes())
                         {
+                            if (_mangledTypeNames.ContainsKey(t))
+                            {
+                                Debug.Assert(
+                                    (t.Category & TypeFlags.CategoryMask) <= TypeFlags.Double ||
+                                    t == type.Context.GetWellKnownType(WellKnownType.Object) ||
+                                    t == type.Context.GetWellKnownType(WellKnownType.String));
+                                continue;
+                            }
+
                             string name = t.GetFullName();
 
                             // Include encapsulating type
@@ -266,8 +357,7 @@ namespace ILCompiler
                                 containingType = containingType.ContainingType;
                             }
 
-                            name = SanitizeName(name, true);
-                            name = prependAssemblyName + "_" + name;
+                            name = SanitizeName(prependAssemblyName + "_" + name, true);
 
                             // Ensure that name is unique and update our tables accordingly.
                             name = DisambiguateName(name, deduplicator);
@@ -286,22 +376,22 @@ namespace ILCompiler
             {
                 case TypeFlags.Array:
                 case TypeFlags.SzArray:
-                    mangledName = GetMangledTypeName(((ArrayType)type).ElementType) + "__";
+                    mangledName = GetMangledTypeName(((ArrayType)type).ElementType);
 
                     if (type.IsMdArray)
                     {
-                        mangledName += NestMangledName("ArrayRank" + ((ArrayType)type).Rank.ToStringInvariant());
+                        mangledName += "[md" + ((ArrayType)type).Rank.ToString() + "]"; 
                     }
                     else
                     {
-                        mangledName += NestMangledName("Array");
+                        mangledName += "[]";
                     }
                     break;
                 case TypeFlags.ByRef:
-                    mangledName = GetMangledTypeName(((ByRefType)type).ParameterType) + NestMangledName("ByRef");
+                    mangledName = GetMangledTypeName(((ByRefType)type).ParameterType) + "&";
                     break;
                 case TypeFlags.Pointer:
-                    mangledName = GetMangledTypeName(((PointerType)type).ParameterType) + NestMangledName("Pointer");
+                    mangledName = GetMangledTypeName(((PointerType)type).ParameterType) + "*";
                     break;
 
                 default:
@@ -369,6 +459,23 @@ namespace ILCompiler
             return name;
         }
 
+        public string GetLinkageNameForPInvokeMethod(MethodDesc method, out int ordinal)
+        {
+            string methodName = method.GetPInvokeMethodMetadata().Name;
+
+            if (methodName.StartsWith("#"))
+            {
+                if (int.TryParse(methodName.Substring(1), out ordinal))
+                {
+                    string moduleName = method.GetPInvokeMethodMetadata().Module;
+                    return moduleName + methodName;
+                }
+            }
+
+            ordinal = -1;
+            return methodName;
+        }
+
         private Utf8String ComputeMangledNameMethodWithoutInstantiation(MethodDesc method)
         {
             Debug.Assert(method == method.GetMethodDefinition());
@@ -384,24 +491,34 @@ namespace ILCompiler
                 {
                     foreach (var m in method.OwningType.GetMethods())
                     {
-                        string name = SanitizeName(m.Name);
-                        uint ordinal;
+                        string name;
 
-                        // Ensure that name is unique and update our tables accordingly.
-                        if (GetMethodOrdinal(m, out ordinal))
+                        if (m.IsPInvoke)
                         {
-                            name += OrdinalPrefix + ordinal;
+                            int ordinal;
+                            name = GetLinkageNameForPInvokeMethod(m, out ordinal);
                         }
                         else
                         {
-                            name = DisambiguateName(name, deduplicator);
+                            name = SanitizeName(m.Name);
+                            uint ordinal;
+
+                            // Ensure that name is unique and update our tables accordingly.
+                            if (GetMethodOrdinal(m, out ordinal))
+                            {
+                                name += OrdinalPrefix + ordinal;
+                            }
+                            else
+                            {
+                                name = DisambiguateName(name, deduplicator);
+                            }
+
+                            Debug.Assert(!deduplicator.Contains(name));
+                            deduplicator.Add(name);
+
+                            if (prependTypeName != null)
+                                name = prependTypeName + "__" + name;
                         }
-
-                        Debug.Assert(!deduplicator.Contains(name));
-                        deduplicator.Add(name);
-
-                        if (prependTypeName != null)
-                            name = prependTypeName + "__" + name;
 
                         _mangledMethodNames = _mangledMethodNames.Add(m, name);
                     }
@@ -456,6 +573,35 @@ namespace ILCompiler
             }
 
             return utf8MangledName;
+        }
+
+        protected ImmutableDictionary<MethodDesc, Utf8String> _mangledMethodDictNames = ImmutableDictionary<MethodDesc, Utf8String>.Empty;
+
+        public Utf8String GetMangledMethodNameForDictionary(MethodDesc method)
+        {
+            Utf8String mangledName;
+            if (_mangledMethodDictNames.TryGetValue(method, out mangledName))
+                return mangledName;
+
+            return ComputeMangledMethodDictonaryName(method);
+        }
+
+        private Utf8String ComputeMangledMethodDictonaryName(MethodDesc method)
+        {
+            Utf8String methodName = GetMangledMethodName(method);
+            uint ordinal;
+            if (GetMethodDictionaryOrdinal(method, out ordinal))
+            {
+                methodName += OrdinalPrefix + ordinal;
+            }
+
+            lock (this)
+            {
+                if (!_mangledMethodDictNames.ContainsKey(method))
+                    _mangledMethodDictNames = _mangledMethodDictNames.Add(method, methodName);
+            }
+
+            return _mangledMethodDictNames[method];
         }
 
         private ImmutableDictionary<FieldDesc, Utf8String> _mangledFieldNames = ImmutableDictionary<FieldDesc, Utf8String>.Empty;
@@ -536,6 +682,11 @@ namespace ILCompiler
             }
 
             return mangledName;
+        }
+
+        public string GetMangledDataBlobName(FieldDesc field)
+        {
+            return "__Data_" + ComputeMangledFieldName(field);
         }
 
         public string GetImportedTlsIndexPrefix()

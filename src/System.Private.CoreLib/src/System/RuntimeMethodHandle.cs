@@ -13,7 +13,6 @@ using Internal.Reflection.Augments;
 
 namespace System
 {
-    [Serializable]
     [StructLayout(LayoutKind.Sequential)]
     public struct RuntimeMethodHandle : ISerializable
     {
@@ -33,6 +32,9 @@ namespace System
         {
             if (_value == handle._value)
                 return true;
+
+            if (_value == IntPtr.Zero || handle._value == IntPtr.Zero)
+                return false;
 
             RuntimeTypeHandle declaringType1, declaringType2;
             MethodNameAndSignature nameAndSignature1, nameAndSignature2;
@@ -69,6 +71,9 @@ namespace System
 
         public override int GetHashCode()
         {
+            if (_value == IntPtr.Zero)
+                return 0;
+
             RuntimeTypeHandle declaringType;
             MethodNameAndSignature nameAndSignature;
             RuntimeTypeHandle[] genericArgs;
@@ -108,48 +113,9 @@ namespace System
             return ReflectionAugments.ReflectionCoreCallbacks.GetFunctionPointer(this, declaringType);
         }
 
-        public RuntimeMethodHandle(SerializationInfo info, StreamingContext context)
-        {
-            if (info == null)
-                throw new ArgumentNullException(nameof(info));
-
-            try
-            {
-                MethodBase method = (MethodBase)info.GetValue("MethodObj", typeof(MethodBase));
-                if (method == null)
-                    throw new SerializationException(SR.Serialization_InsufficientState);
-
-                this = method.MethodHandle;
-            }
-            catch (Exception e) when (!(e is SerializationException))
-            {
-                throw new SerializationException(e.Message, e);
-            }
-        }
-
         public void GetObjectData(SerializationInfo info, StreamingContext context)
         {
-            if (info == null)
-                throw new ArgumentNullException(nameof(info));
-
-            try
-            {
-                if (_value == IntPtr.Zero)
-                    throw new SerializationException(SR.Serialization_InvalidFieldState);
-
-                RuntimeTypeHandle declaringType;
-                MethodNameAndSignature nameAndSignature;
-                RuntimeTypeHandle[] genericArgs;
-                RuntimeAugments.TypeLoaderCallbacks.GetRuntimeMethodHandleComponents(this, out declaringType, out nameAndSignature, out genericArgs);
-
-                // This is either a RuntimeMethodInfo or a RuntimeConstructorInfo
-                MethodBase method = MethodInfo.GetMethodFromHandle(this, declaringType);
-                info.AddValue("MethodObj", method, typeof(MethodBase));
-            }
-            catch (Exception e) when (!(e is SerializationException))
-            {
-                throw new SerializationException(e.Message, e);
-            }
+            throw new PlatformNotSupportedException();
         }
     }
 }

@@ -18,7 +18,7 @@ namespace System.Reflection.Runtime.TypeInfos
     //
     // The runtime's implementation of TypeInfo's for the "HasElement" subclass of types. 
     //
-    internal abstract partial class RuntimeHasElementTypeInfo : RuntimeTypeInfo, IKeyedItem<RuntimeHasElementTypeInfo.UnificationKey>
+    internal abstract partial class RuntimeHasElementTypeInfo : RuntimeTypeInfo, IKeyedItem<RuntimeHasElementTypeInfo.UnificationKey>, IRuntimeMemberInfoWithNoMetadataDefinition
     {
         protected RuntimeHasElementTypeInfo(UnificationKey key)
             : base()
@@ -36,6 +36,9 @@ namespace System.Reflection.Runtime.TypeInfos
         protected abstract override bool IsPointerImpl();
         public sealed override bool IsConstructedGenericType => false;
         public sealed override bool IsGenericParameter => false;
+        public sealed override bool IsGenericTypeParameter => false;
+        public sealed override bool IsGenericMethodParameter => false;
+        public sealed override bool IsByRefLike => false;
 
         //
         // Implements IKeyedItem.PrepareKey.
@@ -73,6 +76,19 @@ namespace System.Reflection.Runtime.TypeInfos
             }
         }
 
+        public sealed override IEnumerable<CustomAttributeData> CustomAttributes
+        {
+            get
+            {
+#if ENABLE_REFLECTION_TRACE
+                if (ReflectionTrace.Enabled)
+                    ReflectionTrace.TypeInfo_CustomAttributes(this);
+#endif
+
+                return Empty<CustomAttributeData>.Enumerable;
+            }
+        }
+
         public sealed override bool ContainsGenericParameters
         {
             get
@@ -94,6 +110,15 @@ namespace System.Reflection.Runtime.TypeInfos
                     return null;
                 return elementFullName + Suffix;
             }
+        }
+
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other));
+
+            // This logic is written to match CoreCLR's behavior.
+            return other is Type && other is IRuntimeMemberInfoWithNoMetadataDefinition;
         }
 
         public sealed override string Namespace

@@ -12,7 +12,6 @@ using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
-using System.Diagnostics.Contracts;
 using System.Security;
 using Internal.Runtime.Augments;
 
@@ -76,23 +75,23 @@ namespace System
         /// Returns the current generation number of the target 
         /// of a specified <see cref="System.WeakReference"/>.  
         /// </summary>
-        /// <param name="wr">The WeakReference whose target is the object
+        /// <param name="wo">The WeakReference whose target is the object
         /// whose generation will be returned</param>
         /// <returns>The generation of the target of the WeakReference</returns>
         /// <exception cref="ArgumentNullException">The target of the weak reference
         /// has already been garbage collected.</exception>
-        public static int GetGeneration(WeakReference wr)
+        public static int GetGeneration(WeakReference wo)
         {
             // note - this throws an NRE if given a null weak reference. This isn't
             // documented, but it's the behavior of Desktop and CoreCLR.
-            Object handleRef = RuntimeImports.RhHandleGet(wr.m_handle);
+            Object handleRef = RuntimeImports.RhHandleGet(wo.m_handle);
             if (handleRef == null)
             {
-                throw new ArgumentNullException(nameof(wr));
+                throw new ArgumentNullException(nameof(wo));
             }
 
             int result = RuntimeImports.RhGetGeneration(handleRef);
-            KeepAlive(wr);
+            KeepAlive(wo);
             return result;
         }
 
@@ -265,7 +264,7 @@ namespace System
         /// of memory is available.</param>
         /// <returns>True if the disallowing of garbage collection was successful, False otherwise</returns>
         /// <exception cref="ArgumentOutOfRangeException">If the amount of memory requested
-        /// is too large for the GC to accomodate</exception>
+        /// is too large for the GC to accommodate</exception>
         /// <exception cref="InvalidOperationException">If the GC is already in a NoGCRegion</exception>
         public static bool TryStartNoGCRegion(long totalSize)
         {
@@ -324,24 +323,41 @@ namespace System
 
         private static bool StartNoGCRegionWorker(long totalSize, bool hasLohSize, long lohSize, bool disallowFullBlockingGC)
         {
-            StartNoGCRegionStatus status =
-                (StartNoGCRegionStatus)RuntimeImports.RhStartNoGCRegion(totalSize, hasLohSize, lohSize, disallowFullBlockingGC);
-            if (status == StartNoGCRegionStatus.AmountTooLarge)
+            if (totalSize <= 0)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(totalSize),
-                    SR.ArgumentOutOfRangeException_NoGCRegionSizeTooLarge);
-            }
-            else if (status == StartNoGCRegionStatus.AlreadyInProgress)
-            {
-                throw new InvalidOperationException(
-                    SR.InvalidOperationException_AlreadyInNoGCRegion);
-            }
-            else if (status == StartNoGCRegionStatus.NotEnoughMemory)
-            {
-                return false;
+                    SR.Format(SR.ArgumentOutOfRange_MustBePositive, nameof(totalSize)));
             }
 
+            if (hasLohSize)
+            {
+                if (lohSize <= 0)
+                {
+                    throw new ArgumentOutOfRangeException(
+                        nameof(lohSize),
+                        SR.Format(SR.ArgumentOutOfRange_MustBePositive, nameof(lohSize)));
+                }
+
+                if (lohSize > totalSize)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(lohSize), SR.ArgumentOutOfRange_NoGCLohSizeGreaterTotalSize);
+                }
+            }
+
+            StartNoGCRegionStatus status =
+                (StartNoGCRegionStatus)RuntimeImports.RhStartNoGCRegion(totalSize, hasLohSize, lohSize, disallowFullBlockingGC);
+            switch (status)
+            {
+                case StartNoGCRegionStatus.NotEnoughMemory:
+                    return false;
+                case StartNoGCRegionStatus.AlreadyInProgress:
+                    throw new InvalidOperationException(SR.InvalidOperationException_AlreadyInNoGCRegion);
+                case StartNoGCRegionStatus.AmountTooLarge:
+                    throw new ArgumentOutOfRangeException(nameof(totalSize), SR.ArgumentOutOfRangeException_NoGCRegionSizeTooLarge);
+            }
+
+            Debug.Assert(status == StartNoGCRegionStatus.Succeeded);
             return true;
         }
 
@@ -609,6 +625,26 @@ namespace System
             }
 
             return size;
+        }
+
+        public static long GetAllocatedBytesForCurrentThread()
+        {
+            return RuntimeImports.RhGetAllocatedBytesForCurrentThread();
+        }
+
+        internal static void GetMemoryInfo(out uint highMemLoadThreshold,
+                                           out ulong totalPhysicalMem,
+                                           out uint lastRecordedMemLoad,
+                                           // The next two are size_t
+                                           out UIntPtr lastRecordedHeapSize,
+                                           out UIntPtr lastRecordedFragmentation)
+        {
+            // TODO: https://github.com/dotnet/corert/issues/5680
+            highMemLoadThreshold = default;
+            totalPhysicalMem = default;
+            lastRecordedMemLoad = default;
+            lastRecordedHeapSize = default;
+            lastRecordedFragmentation = default;
         }
     }
 }

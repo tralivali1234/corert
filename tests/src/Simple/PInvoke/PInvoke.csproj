@@ -1,4 +1,4 @@
-<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Compile Include="*.cs" />
   </ItemGroup>
@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <AdditionalNativeLibrary Include="$(PInvokeNativeObject)" />
+    <NativeLibrary Include="$(PInvokeNativeObject)" />
   </ItemGroup>
 
 

@@ -35,6 +35,9 @@ namespace System.Reflection.Runtime.TypeInfos
         protected sealed override bool IsPointerImpl() => false;
         public sealed override bool IsConstructedGenericType => false;
         public sealed override bool IsGenericParameter => true;
+        public abstract override bool IsGenericTypeParameter { get; }
+        public abstract override bool IsGenericMethodParameter { get; }
+        public sealed override bool IsByRefLike => false;
 
         public sealed override Assembly Assembly
         {
@@ -71,6 +74,19 @@ namespace System.Reflection.Runtime.TypeInfos
 #endif
                 return null;  // We return null as generic parameter types are not roundtrippable through Type.GetType().
             }
+        }
+
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other));
+
+            // Unlike most other MemberInfo objects, generic parameter types never get cloned due to containing generic types being instantiated.
+            // That is, their DeclaringType is always the generic type definition. As a Type, the ReflectedType property is always equal to the DeclaringType.
+            //
+            // Because of these conditions, we can safely implement both the method token equivalence and the "is this type from the same implementor"
+            // check as our regular Equals() method.
+            return Equals(other);
         }
 
         public sealed override int GenericParameterPosition

@@ -71,6 +71,26 @@ namespace Internal.Runtime.TypeLoader
             return TypeLoaderEnvironment.Instance.TryGetRuntimeFieldHandleComponents(runtimeFieldHandle, out declaringTypeHandle, out fieldName);
         }
 
+        public override IntPtr ConvertUnboxingFunctionPointerToUnderlyingNonUnboxingPointer(IntPtr unboxingFunctionPointer, RuntimeTypeHandle declaringType)
+        {
+            return TypeLoaderEnvironment.ConvertUnboxingFunctionPointerToUnderlyingNonUnboxingPointer(unboxingFunctionPointer, declaringType);
+        }
+
+        public override bool TryGetPointerTypeForTargetType(RuntimeTypeHandle pointeeTypeHandle, out RuntimeTypeHandle pointerTypeHandle)
+        {
+            return TypeLoaderEnvironment.Instance.TryGetPointerTypeForTargetType(pointeeTypeHandle, out pointerTypeHandle);
+        }
+
+        public override bool TryGetArrayTypeForElementType(RuntimeTypeHandle elementTypeHandle, bool isMdArray, int rank, out RuntimeTypeHandle arrayTypeHandle)
+        {
+            return TypeLoaderEnvironment.Instance.TryGetArrayTypeForElementType(elementTypeHandle, isMdArray, rank, out arrayTypeHandle);
+        }
+
+        public override IntPtr UpdateFloatingDictionary(IntPtr context, IntPtr dictionaryPtr)
+        {
+            return TypeLoaderEnvironment.Instance.UpdateFloatingDictionary(context, dictionaryPtr);
+        }
+
         /// <summary>
         /// Register a new runtime-allocated code thunk in the diagnostic stream.
         /// </summary>
@@ -200,7 +220,7 @@ namespace Internal.Runtime.TypeLoader
             return !type.RuntimeTypeHandle.IsNull();
         }
 
-        private TypeDesc GetConstructedTypeFromParserAndNativeLayoutContext(ref NativeParser parser, NativeLayoutInfoLoadContext nativeLayoutContext)
+        internal TypeDesc GetConstructedTypeFromParserAndNativeLayoutContext(ref NativeParser parser, NativeLayoutInfoLoadContext nativeLayoutContext)
         {
             TypeDesc parsedType = nativeLayoutContext.GetType(ref parser);
             if (parsedType == null)
@@ -498,6 +518,67 @@ namespace Internal.Runtime.TypeLoader
             }
         }
 
+        public unsafe IntPtr UpdateFloatingDictionary(IntPtr context, IntPtr dictionaryPtr)
+        {
+            IntPtr newFloatingDictionary;
+            bool isNewlyAllocatedDictionary;
+            bool isTypeContext = context != dictionaryPtr;
+
+            if (isTypeContext)
+            {
+                // Look for the exact base type that owns the dictionary. We may be having
+                // a virtual method run on a derived type and the generic lookup are performed
+                // on the base type's dictionary.
+                EEType* pEEType = (EEType*)context.ToPointer();
+                context = (IntPtr)EETypeCreator.GetBaseEETypeForDictionaryPtr(pEEType, dictionaryPtr);
+            }
+
+            using (LockHolder.Hold(_typeLoaderLock))
+            {
+                // Check if some other thread already allocated a floating dictionary and updated the fixed portion
+                if(*(IntPtr*)dictionaryPtr != IntPtr.Zero)
+                    return *(IntPtr*)dictionaryPtr;
+
+                try
+                {
+                    if (t_isReentrant)
+                        Environment.FailFast("Reentrant update to floating dictionary");
+                    t_isReentrant = true;
+
+                    newFloatingDictionary = TypeBuilder.TryBuildFloatingDictionary(context, isTypeContext, dictionaryPtr, out isNewlyAllocatedDictionary);
+
+                    t_isReentrant = false;
+                }
+                catch
+                {
+                    // Catch and rethrow any exceptions instead of using finally block. Otherwise, filters that are run during 
+                    // the first pass of exception unwind may hit the re-entrancy fail fast above.
+
+                    // TODO: Convert this to filter for better diagnostics once we switch to Roslyn
+
+                    t_isReentrant = false;
+                    throw;
+                }
+            }
+
+            if (newFloatingDictionary == IntPtr.Zero)
+            {
+                Environment.FailFast("Unable to update floating dictionary");
+                return IntPtr.Zero;
+            }
+
+            // The pointer to the floating dictionary is the first slot of the fixed dictionary.
+            if (Interlocked.CompareExchange(ref *(IntPtr*)dictionaryPtr, newFloatingDictionary, IntPtr.Zero) != IntPtr.Zero)
+            {
+                // Some other thread beat us and updated the pointer to the floating dictionary.
+                // Free the one allocated by the current thread
+                if (isNewlyAllocatedDictionary)
+                    MemoryHelpers.FreeMemory(newFloatingDictionary);
+            }
+
+            return *(IntPtr*)dictionaryPtr;
+        }
+
         public bool CanInstantiationsShareCode(RuntimeTypeHandle[] genericArgHandles1, RuntimeTypeHandle[] genericArgHandles2, CanonicalFormKind kind)
         {
             if (genericArgHandles1.Length != genericArgHandles2.Length)
@@ -584,13 +665,29 @@ namespace Internal.Runtime.TypeLoader
 
         public static unsafe bool TryGetTargetOfUnboxingAndInstantiatingStub(IntPtr maybeInstantiatingAndUnboxingStub, out IntPtr targetMethod)
         {
-            targetMethod = IntPtr.Zero;
+            targetMethod = RuntimeAugments.GetTargetOfUnboxingAndInstantiatingStub(maybeInstantiatingAndUnboxingStub);
+            if (targetMethod != IntPtr.Zero)
+            {
+                return true;
+            }
+
+            // TODO: The rest of the code in this function is specific to ProjectN only. When we kill the binder, get rid of this
+            // linear search code (the only API that should be used for the lookup is the one above)
 
             // Get module
             IntPtr associatedModule = RuntimeAugments.GetOSModuleFromPointer(maybeInstantiatingAndUnboxingStub);
             if (associatedModule == IntPtr.Zero)
             {
                 return false;
+            }
+
+            // Module having a type manager means we are not in ProjectN mode. Bail out earlier.
+            foreach (TypeManagerHandle handle in ModuleList.Enumerate())
+            {
+                if (handle.OsModuleBase == associatedModule && handle.IsTypeManager)
+                {
+                    return false;
+                }
             }
 
             // Get UnboxingAndInstantiatingTable
@@ -749,6 +846,57 @@ namespace Internal.Runtime.TypeLoader
 #else
             return false;
 #endif
+        }
+
+        public static IntPtr ConvertUnboxingFunctionPointerToUnderlyingNonUnboxingPointer(IntPtr unboxingFunctionPointer, RuntimeTypeHandle declaringType)
+        {
+            if (FunctionPointerOps.IsGenericMethodPointer(unboxingFunctionPointer))
+            {
+                // Handle shared generic methods
+                unsafe
+                {
+                    GenericMethodDescriptor* functionPointerDescriptor = FunctionPointerOps.ConvertToGenericDescriptor(unboxingFunctionPointer);
+                    IntPtr nonUnboxingTarget = RuntimeAugments.GetCodeTarget(functionPointerDescriptor->MethodFunctionPointer);
+                    Debug.Assert(nonUnboxingTarget != functionPointerDescriptor->MethodFunctionPointer);
+                    Debug.Assert(nonUnboxingTarget == RuntimeAugments.GetCodeTarget(nonUnboxingTarget));
+                    return FunctionPointerOps.GetGenericMethodFunctionPointer(nonUnboxingTarget, functionPointerDescriptor->InstantiationArgument);
+                }
+            }
+
+            // GetCodeTarget will look through simple unboxing stubs (ones that consist of adjusting the this pointer and then
+            // jumping to the target.
+            IntPtr exactTarget = RuntimeAugments.GetCodeTarget(unboxingFunctionPointer);
+            if (RuntimeAugments.IsGenericType(declaringType))
+            {
+                IntPtr fatFunctionPointerTarget;
+
+                // This check looks for unboxing and instantiating stubs generated via the compiler backend
+                if (TypeLoaderEnvironment.TryGetTargetOfUnboxingAndInstantiatingStub(exactTarget, out fatFunctionPointerTarget))
+                {
+                    // If this is an unboxing and instantiating stub, use seperate table, find target, and create fat function pointer
+                    exactTarget = FunctionPointerOps.GetGenericMethodFunctionPointer(fatFunctionPointerTarget,
+                                                                                        declaringType.ToIntPtr());
+                }
+                else
+                {
+                    IntPtr newExactTarget;
+                    // This check looks for unboxing and instantiating stubs generated dynamically as thunks in the calling convention converter
+                    if (CallConverterThunk.TryGetNonUnboxingFunctionPointerFromUnboxingAndInstantiatingStub(exactTarget,
+                        declaringType, out newExactTarget))
+                    {
+                        // CallingConventionConverter determined non-unboxing stub
+                        exactTarget = newExactTarget;
+                    }
+                    else
+                    {
+                        // Target method was a method on a generic, but it wasn't a shared generic, and thus none of the above
+                        // complex unboxing stub digging logic was necessary. Do nothing, and use exactTarget as discovered
+                        // from GetCodeTarget
+                    }
+                }
+            }
+
+            return exactTarget;
         }
     }
 }

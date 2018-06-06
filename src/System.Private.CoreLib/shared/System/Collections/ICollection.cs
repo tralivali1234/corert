@@ -3,7 +3,6 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
-using System.Diagnostics.Contracts;
 
 namespace System.Collections
 {
@@ -11,7 +10,7 @@ namespace System.Collections
     // synchronization methods.
     public interface ICollection : IEnumerable
     {
-        // Interfaces are not serialable
+        // Interfaces are not serializable
         // CopyTo copies a collection into an Array, starting at a particular
         // index into the array.
         // 
@@ -29,7 +28,7 @@ namespace System.Collections
         // implementation of a collection, and use one of the internal objects
         // found in that code.
         //
-        // In the absense of a static Synchronized method on a collection, 
+        // In the absence of a static Synchronized method on a collection, 
         // the expected usage for SyncRoot would look like this:
         // 
         // ICollection col = ...
@@ -50,7 +49,7 @@ namespace System.Collections
         // or your language's equivalent to the C# lock keyword as mentioned 
         // above.
         // 
-        // For collections with no publically available underlying store, the 
+        // For collections with no publicly available underlying store, the 
         // expected implementation is to simply return the this pointer.  Note 
         // that the this pointer may not be sufficient for collections that 
         // wrap other collections;  those should return the underlying 

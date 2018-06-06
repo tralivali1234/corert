@@ -22,9 +22,12 @@ namespace ILCompiler
     {
         private MetadataFieldLayoutAlgorithm _metadataFieldLayoutAlgorithm = new CompilerMetadataFieldLayoutAlgorithm();
         private RuntimeDeterminedFieldLayoutAlgorithm _runtimeDeterminedFieldLayoutAlgorithm = new RuntimeDeterminedFieldLayoutAlgorithm();
+        private VectorOfTFieldLayoutAlgorithm _vectorOfTFieldLayoutAlgorithm;
         private MetadataRuntimeInterfacesAlgorithm _metadataRuntimeInterfacesAlgorithm = new MetadataRuntimeInterfacesAlgorithm();
         private ArrayOfTRuntimeInterfacesAlgorithm _arrayOfTRuntimeInterfacesAlgorithm;
         private MetadataVirtualMethodAlgorithm _virtualMethodAlgorithm = new MetadataVirtualMethodAlgorithm();
+
+        private SimdHelper _simdHelper;
 
         private TypeDesc[] _arrayOfTInterfaces;
         
@@ -59,7 +62,7 @@ namespace ILCompiler
             }
             protected override ModuleData CreateValueFromKey(EcmaModule key)
             {
-                Debug.Assert(false, "CreateValueFromKey not supported");
+                Debug.Fail("CreateValueFromKey not supported");
                 return null;
             }
         }
@@ -87,18 +90,27 @@ namespace ILCompiler
             }
             protected override ModuleData CreateValueFromKey(string key)
             {
-                Debug.Assert(false, "CreateValueFromKey not supported");
+                Debug.Fail("CreateValueFromKey not supported");
                 return null;
             }
         }
         private SimpleNameHashtable _simpleNameHashtable = new SimpleNameHashtable();
 
         private SharedGenericsMode _genericsMode;
-
+        
         public CompilerTypeSystemContext(TargetDetails details, SharedGenericsMode genericsMode)
             : base(details)
         {
             _genericsMode = genericsMode;
+
+            _vectorOfTFieldLayoutAlgorithm = new VectorOfTFieldLayoutAlgorithm(_metadataFieldLayoutAlgorithm);
+
+            GenericsConfig = new SharedGenericsConfiguration();
+        }
+
+        public SharedGenericsConfiguration GenericsConfig
+        {
+            get;
         }
 
         public IReadOnlyDictionary<string, string> InputFilePaths
@@ -128,7 +140,7 @@ namespace ILCompiler
             return GetModuleForSimpleName(name.Name, throwIfNotFound);
         }
 
-        public EcmaModule GetModuleForSimpleName(string simpleName, bool throwIfNotFound = true)
+        public ModuleDesc GetModuleForSimpleName(string simpleName, bool throwIfNotFound = true)
         {
             ModuleData existing;
             if (_simpleNameHashtable.TryGetValue(simpleName, out existing))
@@ -139,19 +151,33 @@ namespace ILCompiler
             {
                 if (!ReferenceFilePaths.TryGetValue(simpleName, out filePath))
                 {
+                    // We allow the CanonTypesModule to not be an EcmaModule.
+                    if (((IAssemblyDesc)CanonTypesModule).GetName().Name == simpleName)
+                        return CanonTypesModule;
+
                     // TODO: the exception is wrong for two reasons: for one, this should be assembly full name, not simple name.
                     // The other reason is that on CoreCLR, the exception also captures the reason. We should be passing two
                     // string IDs. This makes this rather annoying.
                     if (throwIfNotFound)
-                        throw new TypeSystemException.FileNotFoundException(ExceptionStringID.FileLoadErrorGeneric, simpleName);
+                        ThrowHelper.ThrowFileNotFoundException(ExceptionStringID.FileLoadErrorGeneric, simpleName);
                     return null;
                 }
             }
 
-            return AddModule(filePath, simpleName);
+            return AddModule(filePath, simpleName, true);
         }
 
         public EcmaModule GetModuleFromPath(string filePath)
+        {
+            return GetOrAddModuleFromPath(filePath, true);
+        }
+
+        public EcmaModule GetMetadataOnlyModuleFromPath(string filePath)
+        {
+            return GetOrAddModuleFromPath(filePath, false);
+        }
+
+        private EcmaModule GetOrAddModuleFromPath(string filePath, bool useForBinding)
         {
             // This method is not expected to be called frequently. Linear search is acceptable.
             foreach (var entry in ModuleHashtable.Enumerator.Get(_moduleHashtable))
@@ -160,10 +186,10 @@ namespace ILCompiler
                     return entry.Module;
             }
 
-            return AddModule(filePath, null);
+            return AddModule(filePath, null, useForBinding);
         }
 
-        private static unsafe PEReader OpenPEFile(string filePath, out MemoryMappedViewAccessor mappedViewAccessor)
+        public static unsafe PEReader OpenPEFile(string filePath, out MemoryMappedViewAccessor mappedViewAccessor)
         {
             // System.Reflection.Metadata has heuristic that tries to save virtual address space. This heuristic does not work
             // well for us since it can make IL access very slow (call to OS for each method IL query). We will map the file
@@ -201,7 +227,7 @@ namespace ILCompiler
             }
         }
 
-        private EcmaModule AddModule(string filePath, string expectedSimpleName)
+        private EcmaModule AddModule(string filePath, string expectedSimpleName, bool useForBinding)
         {
             MemoryMappedViewAccessor mappedViewAccessor = null;
             PdbSymbolReader pdbReader = null;
@@ -228,12 +254,15 @@ namespace ILCompiler
 
                 lock (this)
                 {
-                    ModuleData actualModuleData = _simpleNameHashtable.AddOrGetExisting(moduleData);
-                    if (actualModuleData != moduleData)
+                    if (useForBinding)
                     {
-                        if (actualModuleData.FilePath != filePath)
-                            throw new FileNotFoundException("Module with same simple name already exists " + filePath);
-                        return actualModuleData.Module;
+                        ModuleData actualModuleData = _simpleNameHashtable.AddOrGetExisting(moduleData);
+                        if (actualModuleData != moduleData)
+                        {
+                            if (actualModuleData.FilePath != filePath)
+                                throw new FileNotFoundException("Module with same simple name already exists " + filePath);
+                            return actualModuleData.Module;
+                        }
                     }
                     mappedViewAccessor = null; // Ownership has been transfered
                     pdbReader = null; // Ownership has been transferred
@@ -258,6 +287,8 @@ namespace ILCompiler
                 return UniversalCanonLayoutAlgorithm.Instance;
             else if (type.IsRuntimeDeterminedType)
                 return _runtimeDeterminedFieldLayoutAlgorithm;
+            else if (_simdHelper.IsVectorOfT(type))
+                return _vectorOfTFieldLayoutAlgorithm;
             else
                 return _metadataFieldLayoutAlgorithm;
         }
@@ -321,23 +352,29 @@ namespace ILCompiler
             {
                 return GetAllMethodsForEnum(type);
             }
+            else if (type.IsValueType)
+            {
+                return GetAllMethodsForValueType(type);
+            }
 
             return type.GetMethods();
         }
 
-        private IEnumerable<MethodDesc> GetAllMethodsForDelegate(TypeDesc type)
+        protected virtual IEnumerable<MethodDesc> GetAllMethodsForDelegate(TypeDesc type)
         {
-            // Inject the synthetic GetThunk virtual override
+            // Inject the synthetic methods that support the implementation of the delegate.
             InstantiatedType instantiatedType = type as InstantiatedType;
             if (instantiatedType != null)
             {
                 DelegateInfo info = GetDelegateInfo(type.GetTypeDefinition());
-                yield return GetMethodForInstantiatedType(info.GetThunkMethod, instantiatedType);
+                foreach (MethodDesc syntheticMethod in info.Methods)
+                    yield return GetMethodForInstantiatedType(syntheticMethod, instantiatedType);
             }
             else
             {
                 DelegateInfo info = GetDelegateInfo(type);
-                yield return info.GetThunkMethod;
+                foreach (MethodDesc syntheticMethod in info.Methods)
+                    yield return syntheticMethod;
             }
 
             // Append all the methods defined in metadata
@@ -411,6 +448,9 @@ namespace ILCompiler
                 // If the file doesn't exist, try the path specified in the CodeView section of the image
                 foreach (DebugDirectoryEntry debugEntry in peReader.ReadDebugDirectory())
                 {
+                    if (debugEntry.Type != DebugDirectoryEntryType.CodeView)
+                        continue;
+
                     string candidateFileName = peReader.ReadCodeViewDebugDirectoryData(debugEntry).Path;
                     if (Path.IsPathRooted(candidateFileName) && File.Exists(candidateFileName))
                     {
@@ -444,4 +484,32 @@ namespace ILCompiler
         Disabled,
         CanonicalReferenceTypes,
     }
+
+    public class SharedGenericsConfiguration
+    {
+        //
+        // Universal Shared Generics heuristics magic values determined empirically
+        //
+        public long UniversalCanonGVMReflectionRootHeuristic_InstantiationCount { get; }
+        public long UniversalCanonGVMDepthHeuristic_NonCanonDepth { get; }
+        public long UniversalCanonGVMDepthHeuristic_CanonDepth { get; }
+
+        // Controls how many different instantiations of a generic method, or method on generic type
+        // should be allowed before trying to fall back to only supplying USG in the reflection
+        // method table.
+        public long UniversalCanonReflectionMethodRootHeuristic_InstantiationCount { get; }
+
+        public SharedGenericsConfiguration()
+        {
+            UniversalCanonGVMReflectionRootHeuristic_InstantiationCount = 4;
+            UniversalCanonGVMDepthHeuristic_NonCanonDepth = 2;
+            UniversalCanonGVMDepthHeuristic_CanonDepth = 1;
+
+            // Unlike the GVM heuristics which are intended to kick in aggresively
+            // this heuristic exists to make it so that a fair amount of generic
+            // expansion is allowed. Numbers are chosen to allow a fairly large
+            // amount of generic expansion before trimming.
+            UniversalCanonReflectionMethodRootHeuristic_InstantiationCount = 1024;
+        }
+    };
 }

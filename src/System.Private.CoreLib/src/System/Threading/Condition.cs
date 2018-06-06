@@ -9,6 +9,7 @@ using System.Diagnostics;
 
 namespace System.Threading
 {
+    [System.Runtime.CompilerServices.ReflectionBlocked]
     public sealed class Condition
     {
         internal class Waiter
@@ -44,7 +45,7 @@ namespace System.Threading
             for (Waiter current = _waitersHead; current != null; current = current.next)
                 if (current == waiter)
                     return;
-            Debug.Assert(false, "Waiter is not in the waiter list");
+            Debug.Fail("Waiter is not in the waiter list");
         }
 
         private unsafe void AssertIsNotInList(Waiter waiter)
@@ -54,7 +55,7 @@ namespace System.Threading
 
             for (Waiter current = _waitersHead; current != null; current = current.next)
                 if (current == waiter)
-                    Debug.Assert(false, "Waiter is in the waiter list, but should not be");
+                    Debug.Fail("Waiter is in the waiter list, but should not be");
         }
 
         private unsafe void AddWaiter(Waiter waiter)

@@ -109,14 +109,24 @@ namespace System
         /// <param name="isOpenResolver"> 
         ///   This value indicates if the returned pointer is an open resolver structure.
         /// </param>
+        /// <param name="isInterpreterEntrypoint"> 
+        ///   Delegate points to an object array thunk (the delegate wraps a Func<object[], object> delegate). This
+        ///   is typically a delegate pointing to the LINQ expression interpreter.
+        /// </param>
         /// <returns></returns>
-        unsafe internal IntPtr GetFunctionPointer(out RuntimeTypeHandle typeOfFirstParameterIfInstanceDelegate, out bool isOpenResolver)
+        unsafe internal IntPtr GetFunctionPointer(out RuntimeTypeHandle typeOfFirstParameterIfInstanceDelegate, out bool isOpenResolver, out bool isInterpreterEntrypoint)
         {
             typeOfFirstParameterIfInstanceDelegate = default(RuntimeTypeHandle);
             isOpenResolver = false;
+            isInterpreterEntrypoint = false;
 
             if (GetThunk(MulticastThunk) == m_functionPointer)
             {
+                return IntPtr.Zero;
+            }
+            else if (GetThunk(ObjectArrayThunk) == m_functionPointer)
+            {
+                isInterpreterEntrypoint = true;
                 return IntPtr.Zero;
             }
             else if (m_extraFunctionPointerOrData != IntPtr.Zero)
@@ -363,7 +373,22 @@ namespace System
             else
             {
                 IntPtr invokeThunk = this.GetThunk(DelegateInvokeThunk);
-                object result = System.InvokeUtils.CallDynamicInvokeMethod(this.m_firstParameter, this.m_functionPointer, this, invokeThunk, IntPtr.Zero, this, args, binderBundle: null);
+#if PROJECTN
+                object result = InvokeUtils.CallDynamicInvokeMethod(this.m_firstParameter, this.m_functionPointer, this, invokeThunk, IntPtr.Zero, this, args, binderBundle: null, wrapInTargetInvocationException: true);
+#else
+                IntPtr genericDictionary = IntPtr.Zero;
+                if (FunctionPointerOps.IsGenericMethodPointer(invokeThunk))
+                {
+                    unsafe
+                    {
+                        GenericMethodDescriptor* descriptor = FunctionPointerOps.ConvertToGenericDescriptor(invokeThunk);
+                        genericDictionary = descriptor->InstantiationArgument;
+                        invokeThunk = descriptor->MethodFunctionPointer;
+                    }
+                }
+
+                object result = InvokeUtils.CallDynamicInvokeMethod(this.m_firstParameter, this.m_functionPointer, null, invokeThunk, genericDictionary, this, args, binderBundle: null, wrapInTargetInvocationException: true, invokeMethodHelperIsThisCall: false);
+#endif
                 DebugAnnotations.PreviousCallContainsDebuggerStepInCode();
                 return result;
             }
@@ -483,21 +508,21 @@ namespace System
 
         // This method will combine this delegate with the passed delegate
         //  to form a new delegate.
-        protected virtual Delegate CombineImpl(Delegate follow)
+        protected virtual Delegate CombineImpl(Delegate d)
         {
-            if ((Object)follow == null) // cast to object for a more efficient test
+            if ((Object)d == null) // cast to object for a more efficient test
                 return this;
 
             // Verify that the types are the same...
-            if (!InternalEqualTypes(this, follow))
+            if (!InternalEqualTypes(this, d))
                 throw new ArgumentException();
 
-            if (IsDynamicDelegate() && follow.IsDynamicDelegate())
+            if (IsDynamicDelegate() && d.IsDynamicDelegate())
             {
                 throw new InvalidOperationException();
             }
 
-            MulticastDelegate dFollow = (MulticastDelegate)follow;
+            MulticastDelegate dFollow = (MulticastDelegate)d;
             Delegate[] resultList;
             int followCount = 1;
             Delegate[] followList = dFollow.m_helperObject as Delegate[];
@@ -606,12 +631,12 @@ namespace System
         //  look at the invocation list.)  If this is found we remove it from
         //  this list and return a new delegate.  If its not found a copy of the
         //  current list is returned.
-        protected virtual Delegate RemoveImpl(Delegate value)
+        protected virtual Delegate RemoveImpl(Delegate d)
         {
             // There is a special case were we are removing using a delegate as
             //    the value we need to check for this case
             //
-            MulticastDelegate v = value as MulticastDelegate;
+            MulticastDelegate v = d as MulticastDelegate;
 
             if (v == null)
                 return this;
@@ -621,7 +646,7 @@ namespace System
                 if (invocationList == null)
                 {
                     // they are both not real Multicast
-                    if (this.Equals(value))
+                    if (this.Equals(d))
                         return null;
                 }
                 else
@@ -629,7 +654,7 @@ namespace System
                     int invocationCount = (int)m_extraFunctionPointerOrData;
                     for (int i = invocationCount; --i >= 0;)
                     {
-                        if (value.Equals(invocationList[i]))
+                        if (d.Equals(invocationList[i]))
                         {
                             if (invocationCount == 2)
                             {
@@ -792,7 +817,7 @@ namespace System
 
         public virtual void GetObjectData(SerializationInfo info, StreamingContext context)
         {
-            throw new NotSupportedException();
+            throw new PlatformNotSupportedException(SR.Serialization_DelegatesNotSupported);
         }
 
         internal bool IsOpenStatic
@@ -899,8 +924,7 @@ namespace System
             else
             {
                 RuntimeTypeHandle typeOfFirstParameterIfInstanceDelegate;
-                bool isOpenThunk;
-                IntPtr functionPointer = GetFunctionPointer(out typeOfFirstParameterIfInstanceDelegate, out isOpenThunk);
+                IntPtr functionPointer = GetFunctionPointer(out typeOfFirstParameterIfInstanceDelegate, out bool _, out bool _);
                 if (!FunctionPointerOps.IsGenericMethodPointer(functionPointer))
                 {
                     return DebuggerFunctionPointerFormattingHook(functionPointer, typeOfFirstParameterIfInstanceDelegate);

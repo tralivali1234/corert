@@ -22,8 +22,8 @@ namespace System
     // to create their own exceptions do so by extending this class. 
     // ApplicationException extends but adds no new functionality to 
     // RecoverableException.
-    // 
     [Serializable]
+    [System.Runtime.CompilerServices.TypeForwardedFrom("mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")]
     public class ApplicationException : Exception
     {
         // Creates a new ApplicationException with its message string set to
@@ -32,7 +32,7 @@ namespace System
         public ApplicationException()
             : base(SR.Arg_ApplicationException)
         {
-            HResult = __HResults.COR_E_APPLICATION;
+            HResult = HResults.COR_E_APPLICATION;
         }
 
         // Creates a new ApplicationException with its message string set to
@@ -42,15 +42,17 @@ namespace System
         public ApplicationException(String message)
             : base(message)
         {
-            HResult = __HResults.COR_E_APPLICATION;
+            HResult = HResults.COR_E_APPLICATION;
         }
 
         public ApplicationException(String message, Exception innerException)
             : base(message, innerException)
         {
-            HResult = __HResults.COR_E_APPLICATION;
+            HResult = HResults.COR_E_APPLICATION;
         }
 
-        protected ApplicationException(SerializationInfo info, StreamingContext context) : base(info, context) { }
+        protected ApplicationException(SerializationInfo info, StreamingContext context) : base(info, context)
+        {
+        }
     }
 }

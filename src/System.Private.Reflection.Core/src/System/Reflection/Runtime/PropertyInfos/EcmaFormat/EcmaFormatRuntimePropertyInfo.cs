@@ -10,6 +10,7 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Reflection.Runtime.General;
+using System.Reflection.Runtime.General.EcmaFormat;
 using System.Reflection.Runtime.TypeInfos;
 using System.Reflection.Runtime.TypeInfos.EcmaFormat;
 using System.Reflection.Runtime.MethodInfos;
@@ -78,15 +79,27 @@ namespace System.Reflection.Runtime.PropertyInfos.EcmaFormat
                     ReflectionTrace.PropertyInfo_CustomAttributes(this);
 #endif
 
-                foreach (CustomAttributeData cad in RuntimeCustomAttributeData.GetCustomAttributes(_reader, _property.GetCustomAttributes()))
-                    yield return cad;
+                return RuntimeCustomAttributeData.GetCustomAttributes(_reader, _property.GetCustomAttributes());
             }
+        }
+
+        public sealed override bool HasSameMetadataDefinitionAs(MemberInfo other)
+        {
+            if (other == null)
+                throw new ArgumentNullException(nameof(other));
+
+            if (!(other is EcmaFormatRuntimePropertyInfo otherProperty))
+                return false;
+            if (!(_reader == otherProperty._reader))
+                return false;
+            if (!(_propertyHandle.Equals(otherProperty._propertyHandle)))
+                return false;
+            return true;
         }
 
         public sealed override bool Equals(Object obj)
         {
-            EcmaFormatRuntimePropertyInfo other = obj as EcmaFormatRuntimePropertyInfo;
-            if (other == null)
+            if (!(obj is EcmaFormatRuntimePropertyInfo other))
                 return false;
             if (!(_reader == other._reader))
                 return false;
@@ -104,20 +117,6 @@ namespace System.Reflection.Runtime.PropertyInfos.EcmaFormat
             return _propertyHandle.GetHashCode();
         }
 
-        public sealed override Object GetConstantValue()
-        {
-#if ENABLE_REFLECTION_TRACE
-            if (ReflectionTrace.Enabled)
-                ReflectionTrace.PropertyInfo_GetConstantValue(this);
-#endif
-            Object defaultValue;
-            if (!DefaultValueProcessing.GetDefaultValueIfAny(_reader, ref _property, this, out defaultValue))
-            {
-                throw new InvalidOperationException();
-            }
-            return defaultValue;
-        }
-
         public sealed override int MetadataToken
         {
             get
@@ -132,6 +131,11 @@ namespace System.Reflection.Runtime.PropertyInfos.EcmaFormat
             {
                 return new QSignatureTypeHandle(_reader, _reader.GetBlobReader(_property.Signature));
             }
+        }
+
+        protected sealed override bool GetDefaultValueIfAny(bool raw, out object defaultValue)
+        {
+            return DefaultValueProcessing.GetDefaultValueIfAny(_reader, ref _property, this, raw, out defaultValue);
         }
 
         protected sealed override RuntimeNamedMethodInfo GetPropertyMethod(PropertyMethodSemantics whichMethod)

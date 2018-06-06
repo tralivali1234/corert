@@ -11,7 +11,7 @@
 // This isn't something we want, because we're totally fine using non-posix functions.
 #if defined(__APPLE__)
  #define _DARWIN_C_SOURCE
-#endif // definfed(__APPLE__)
+#endif // defined(__APPLE__)
 
 #include <pthread.h>
 #include <signal.h>
@@ -69,7 +69,7 @@ static const int tccMilliSecondsToMicroSeconds = 1000;
 // The number of nanoseconds in a millisecond.
 static const int tccMilliSecondsToNanoSeconds = 1000000;
 
-// The cachced number of logical CPUs observed.
+// The cached number of logical CPUs observed.
 static uint32_t g_logicalCpuCount = 0;
 
 // Helper memory page used by the FlushProcessWriteBuffers
@@ -84,7 +84,14 @@ static pthread_mutex_t g_flushProcessWriteBuffersMutex;
 bool GCToOSInterface::Initialize()
 {
     // Calculate and cache the number of processors on this machine
-    int cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
+    int sysConfName;
+#if defined(_TARGET_WASM_)
+    sysConfName = _SC_NPROCESSORS_ONLN;
+#else
+    sysConfName = _SC_NPROCESSORS_CONF;
+#endif
+
+    int cpuCount = sysconf(sysConfName);
     if (cpuCount == -1)
     {
         return false;
@@ -330,7 +337,12 @@ bool GCToOSInterface::VirtualCommit(void* address, size_t size)
 //  true if it has succeeded, false if it has failed
 bool GCToOSInterface::VirtualDecommit(void* address, size_t size)
 {
-    return mprotect(address, size, PROT_NONE) == 0;
+    // TODO: This can fail, however the GC does not handle the failure gracefully
+    // Explicitly calling mmap instead of mprotect here makes it
+    // that much more clear to the operating system that we no
+    // longer need these pages. Also, GC depends on re-commited pages to
+    // be zeroed-out.
+    return mmap(address, size, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0) != NULL;
 }
 
 // Reset virtual memory range. Indicates that data in the memory range specified by address and size is no
